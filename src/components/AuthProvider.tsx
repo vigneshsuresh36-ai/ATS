@@ -1,0 +1,245 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  onIdTokenChanged,
+  signInWithPopup,
+  signOut as fbSignOut,
+  type User,
+} from "firebase/auth";
+import {
+  getClientAuth,
+  googleProvider,
+  isFirebaseClientConfigured,
+} from "@/lib/firebaseClient";
+import type { AppUser } from "@/lib/types";
+
+type AuthState = {
+  firebaseUser: User | null;
+  profile: AppUser | null;
+  token: string | null;
+  loading: boolean;
+  error: string | null;
+  signInGoogle: () => Promise<void>;
+  signOut: () => Promise<void>;
+  apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
+  refreshProfile: () => Promise<void>;
+  actingAsEmail: string | null;
+  startActingAs: (email: string) => Promise<void>;
+  stopActingAs: () => Promise<void>;
+};
+
+const Ctx = createContext<AuthState | null>(null);
+
+async function fetchMe(token: string, actingAsEmail?: string | null) {
+  const headers = new Headers({ Authorization: `Bearer ${token}` });
+  if (actingAsEmail) headers.set("X-ATS-Act-As", actingAsEmail);
+  const res = await fetch("/api/me", {
+    headers,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to load profile");
+  return data as { user: AppUser; org: { company: string } };
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<AppUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actingAsEmail, setActingAsEmail] = useState<string | null>(null);
+  const actingAsRef = useRef<string | null>(null);
+
+  const refreshProfile = useCallback(async () => {
+    if (!token) {
+      setProfile(null);
+      return;
+    }
+    try {
+      const data = await fetchMe(token, actingAsRef.current);
+      setProfile(data.user);
+      setError(null);
+    } catch (e) {
+      setProfile(null);
+      setError(e instanceof Error ? e.message : "Profile error");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!isFirebaseClientConfigured()) {
+      setError("Firebase client is not configured.");
+      setLoading(false);
+      return;
+    }
+    const auth = getClientAuth();
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
+    // Stay in loading until Firebase session + /api/me are both settled,
+    // so /app never redirects to /login mid-restore (avoids login flicker).
+    return onIdTokenChanged(auth, async (u) => {
+      setFirebaseUser(u);
+      if (!u) {
+        actingAsRef.current = null;
+        setActingAsEmail(null);
+        setToken(null);
+        setProfile(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      try {
+        const t = await u.getIdToken();
+        setToken(t);
+        const data = await fetchMe(t, actingAsRef.current);
+        setProfile(data.user);
+        setError(null);
+      } catch (e) {
+        setToken(null);
+        setProfile(null);
+        setError(e instanceof Error ? e.message : "Profile error");
+      } finally {
+        setLoading(false);
+      }
+    });
+  }, []);
+
+  const signInGoogle = useCallback(async () => {
+    const auth = getClientAuth();
+    if (!auth) throw new Error("Firebase is not configured.");
+    setLoading(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      // Profile is loaded by onAuthStateChanged; keep loading until then.
+    } catch (e) {
+      setLoading(false);
+      throw e;
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setToken(null);
+    setProfile(null);
+    const auth = getClientAuth();
+    if (auth) await fbSignOut(auth);
+  }, []);
+
+  const apiFetch = useCallback(
+    async (path: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      if (actingAsRef.current) headers.set("X-ATS-Act-As", actingAsRef.current);
+      else headers.delete("X-ATS-Act-As");
+      return fetch(path, { ...init, headers });
+    },
+    [token]
+  );
+
+  const startActingAs = useCallback(async (email: string) => {
+    if (!token || profile?.role !== "Admin") {
+      throw new Error("Only an Admin can act as a team member.");
+    }
+    actingAsRef.current = email.toLowerCase();
+    setActingAsEmail(email.toLowerCase());
+    try {
+      const data = await fetchMe(token, actingAsRef.current);
+      setProfile(data.user);
+      setError(null);
+    } catch (cause) {
+      actingAsRef.current = null;
+      setActingAsEmail(null);
+      throw cause;
+    }
+  }, [token, profile?.role]);
+
+  const stopActingAs = useCallback(async () => {
+    actingAsRef.current = null;
+    setActingAsEmail(null);
+    if (!token) return;
+    const data = await fetchMe(token);
+    setProfile(data.user);
+    setError(null);
+  }, [token]);
+
+  const value = useMemo(
+    () => ({
+      firebaseUser,
+      profile,
+      token,
+      loading,
+      error,
+      signInGoogle,
+      signOut,
+      apiFetch,
+      refreshProfile,
+      actingAsEmail,
+      startActingAs,
+      stopActingAs,
+    }),
+    [
+      firebaseUser,
+      profile,
+      token,
+      loading,
+      error,
+      signInGoogle,
+      signOut,
+      apiFetch,
+      refreshProfile,
+      actingAsEmail,
+      startActingAs,
+      stopActingAs,
+    ]
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useAuth() {
+  const v = useContext(Ctx);
+  if (!v) throw new Error("useAuth outside provider");
+  return v;
+}
+
+/** Full-page boot while session restores or sign-in completes. */
+export function AuthBootScreen({
+  message = "Getting things ready",
+  detail = "Restoring your session…",
+}: {
+  message?: string;
+  detail?: string;
+}) {
+  return (
+    <div className="ats-boot" role="status" aria-live="polite" aria-busy="true">
+      <div className="ats-boot-card">
+        <div className="ats-boot-mark-wrap">
+          <div className="ats-boot-ring" aria-hidden />
+          <div className="ats-boot-mark">TA</div>
+        </div>
+        <div>
+          <p className="ats-boot-title">{message}</p>
+          <p className="ats-boot-sub">{detail}</p>
+        </div>
+        <div className="ats-boot-track" aria-hidden>
+          <div className="ats-boot-bar" />
+        </div>
+        <div className="ats-boot-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    </div>
+  );
+}
