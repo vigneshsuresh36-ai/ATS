@@ -75,8 +75,10 @@ export function TodayView({
     { key: "interviewsToday", label: "Prepare for today's interviews", target: "dashboard-interviewsToday" },
   ].filter((item) => list(item.key).length > 0);
 
+  const priority = list("priority");
   return (
     <div className="ats-today-view">
+      {priority.length > 0 && <section className="ats-priority" aria-label="Start here"><div className="ats-priority-head"><h3>Start here</h3><span>Your most urgent candidates, in order</span></div><ol>{priority.map((item) => <li key={String(item.candidateId)}><button type="button" onClick={() => onCand(String(item.candidateId))}><b>{String(item.name)}</b><span>{String(item.reason)}</span><i aria-hidden="true">→</i></button></li>)}</ol></section>}
       <section className="ats-dashboard-attention" aria-label="Actions needing attention"><h3>Needs your attention</h3>{attention.length || upcomingJoiners.length ? <div>{attention.map((item) => <a href={`#${item.target}`} key={item.key}><span>{item.label}</span><strong>{list(item.key).length} →</strong></a>)}{upcomingJoiners.length > 0 && onViewAllJoining && <button type="button" onClick={onViewAllJoining}><span>Review upcoming joiners</span><strong>{upcomingJoiners.length} →</strong></button>}</div> : <p>No actions need your attention right now.</p>}</section>
       <div className="ats-dashboard-hero" style={hero}>
         <div>

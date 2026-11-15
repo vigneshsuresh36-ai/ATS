@@ -2188,3 +2188,53 @@ dialog.ats-call-dialog::backdrop { background: #12121280; backdrop-filter: blur(
 .ats-call-dialog .ats-call-qr { display: grid; justify-items: center; gap: 6px; padding: 12px; border: 1px dashed #ccc; border-radius: 8px; font-size: 12px; color: #555; text-align: center; }
 .ats-call-dialog .ats-call-qr img { image-rendering: pixelated; }
 .premium-workspace .ats-call-dialog button.ats-call-copy { justify-self: center; padding: 4px 8px; border: 0 !important; background: transparent; color: #444; font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; box-shadow: none !important; }
+
+/* Start-here priority list */
+.ats-priority { margin-bottom: 16px; padding: 16px; background: #fff; border: 1px solid #e5e3de; border-radius: 10px; }
+.ats-priority-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.ats-priority-head h3 { margin: 0; font-size: 16px; }
+.ats-priority-head span { font-size: 12px; color: #6b6b67; }
+.ats-priority ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; counter-reset: p; }
+.ats-priority li { counter-increment: p; }
+.premium-workspace .ats-priority li button { display: grid; grid-template-columns: 22px minmax(120px, 220px) minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; text-align: left; background: #faf9f6; color: #191919; border: 1px solid #eeede9 !important; border-radius: 8px; font: inherit; cursor: pointer; box-shadow: none !important; }
+.ats-priority li button::before { content: counter(p); font-weight: 700; color: #6b6b67; }
+.premium-workspace .ats-priority li button:hover { background: #f2f1ed; }
+.ats-priority li button span { color: #55524c; font-size: 13px; overflow-wrap: anywhere; }
+.ats-priority li button i { font-style: normal; color: #6b6b67; }
+@media (max-width: 640px) { .premium-workspace .ats-priority li button { grid-template-columns: 22px minmax(0, 1fr); } .ats-priority li button span { grid-column: 2; } .ats-priority li button i { display: none; } }
+
+/* Drop-off risk and approval link note */
+.ats-risk-pill { display: inline-block; margin-left: 6px; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ats-risk-pill.is-high { background: #fbe3e3; color: #a02020; }
+.ats-risk-pill.is-medium { background: #fdf1d6; color: #8a5a00; }
+.ats-link-note { margin: 0 0 10px; padding: 10px 12px; font-size: 13px; background: #eeede9; border-radius: 6px; overflow-wrap: anywhere; }
+
+/* Call follow-up message */
+.ats-call-dialog .ats-call-msg { display: grid; gap: 6px; margin-top: 4px; }
+.ats-call-dialog .ats-call-msg > label { font-size: 12px; font-weight: 600; }
+.ats-call-dialog .ats-call-msg select { width: 100%; padding: 9px 10px; border: 1.5px solid #ddd; border-radius: 7px; font: inherit; font-size: 13px; background: #fff; }
+.ats-call-dialog .ats-call-msg small { color: #6b6b67; font-size: 12px; }
+.ats-call-dialog .ats-call-msg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ats-call-dialog .ats-call-msg-actions a { padding: 8px 12px; border: 1.5px solid #1d1d1f; border-radius: 6px; color: #1d1d1f; font-size: 13px; font-weight: 600; text-decoration: none; }
+.ats-call-dialog .ats-call-msg-actions a:hover { background: #f1efea; }
+
+/* Voice dictation */
+.premium-workspace .ats-voice-btn { margin: 4px 0 6px; padding: 6px 12px; border: 1.5px solid #1d1d1f !important; border-radius: 16px; background: #fff; color: #1d1d1f; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .ats-voice-btn.is-live { background: #a02020; border-color: #a02020 !important; color: #fff; }
+
+/* One-tap approval page */
+.ats-decide { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: #faf9f6; font-family: var(--font-ui); color: #191919; }
+.ats-decide-card { width: min(480px, 100%); padding: 28px; background: #fff; border: 1px solid #e5e3de; border-radius: 12px; display: grid; gap: 12px; }
+.ats-decide-card h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+.ats-decide-eyebrow { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6b6b67; }
+.ats-decide-card dl { margin: 0; display: grid; gap: 0; }
+.ats-decide-card dl div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #eeede9; font-size: 14px; }
+.ats-decide-card dt { color: #6b6b67; }
+.ats-decide-card dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.ats-decide-card textarea { width: 100%; min-height: 70px; padding: 10px; border: 1.5px solid #ddd; border-radius: 7px; font: inherit; font-size: 14px; }
+.ats-decide-actions { display: flex; gap: 10px; }
+.ats-decide-actions button { flex: 1; padding: 13px; border: 1.5px solid #1d1d1f; border-radius: 8px; background: #fff; color: #1d1d1f; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; }
+.ats-decide-actions button.is-primary { background: #1d1d1f; color: #fff; }
+.ats-decide-actions button:disabled { opacity: .6; cursor: default; }
+.ats-decide-done { margin: 0; padding: 12px; background: #eeede9; border-radius: 8px; font-weight: 600; }
+.ats-decide-error { margin: 0; color: #a02020; font-weight: 600; }

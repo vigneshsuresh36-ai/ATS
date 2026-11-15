@@ -2,17 +2,22 @@
 import { useEffect, useRef, useState } from "react";
 import { CALL_OUTCOMES, dialNumber, displayNumber, type CallOutcome } from "@/lib/callLog";
 import { formatDateTime } from "@/lib/dateFormat";
+import { MESSAGE_FOR_OUTCOME, MESSAGE_LABELS, buildMessage, mailLink, whatsappLink, type MessageKind } from "@/lib/messageTemplates";
 
 type CallEntry = { id: string; outcome: string; note: string; author: string; createdAt: string };
 type Props = {
-  candidate: { id: string; name: string; phone?: string; stage: string };
+  candidate: { id: string; name: string; phone?: string; email?: string; stage: string };
+  roleTitle?: string;
   apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
   /** "icon" is the compact pipeline-row button. */
   variant?: "default" | "compact";
 };
 const NO_CALL_STAGES = ["Rejected", "Social CV Reject", "Candidate Backed Out"];
 
-export function CallCandidate({ candidate, apiFetch, variant = "default" }: Props) {
+export function CallCandidate({ candidate, apiFetch, roleTitle, variant = "default" }: Props) {
+  const [kind, setKind] = useState<MessageKind | "">("");
+  const [draft, setDraft] = useState("");
+  function pickKind(next: MessageKind) { setKind(next); setDraft(buildMessage(next, { name: candidate.name, role: roleTitle })); }
   const dial = dialNumber(candidate.phone);
   const blocked = NO_CALL_STAGES.includes(candidate.stage);
   const disabledReason = !dial ? "No phone number on file" : blocked ? "Candidate is no longer in the process" : "";
@@ -43,7 +48,7 @@ export function CallCandidate({ candidate, apiFetch, variant = "default" }: Prop
     return () => { active = false; };
   }, [open, apiFetch, candidate.id]);
 
-  function close() { setOpen(false); setError(""); setNote(""); setOutcome("Connected"); setCopied(false); setQr(""); }
+  function close() { setOpen(false); setError(""); setNote(""); setOutcome("Connected"); setCopied(false); setQr(""); setKind(""); setDraft(""); }
   async function copyNumber() {
     try { await navigator.clipboard.writeText(dial); setCopied(true); } catch { setError("Could not copy. Select the number and copy it manually."); }
   }
@@ -81,8 +86,23 @@ export function CallCandidate({ candidate, apiFetch, variant = "default" }: Prop
         <button type="button" className="ats-call-copy" onClick={() => void copyNumber()}>{copied ? "Number copied" : "Copy number"}</button>
         <p className="ats-call-hint">Call now opens the dialer on this device, or your call-from-browser extension if you use one. To call from your phone instead, scan the QR code.</p>
         <fieldset className="ats-call-outcomes"><legend>How did it go?</legend>
-          {CALL_OUTCOMES.map((item) => <label key={item} className={outcome === item ? "is-on" : ""}><input type="radio" name={`call-outcome-${candidate.id}`} checked={outcome === item} onChange={() => setOutcome(item)} />{item}</label>)}
+          {CALL_OUTCOMES.map((item) => <label key={item} className={outcome === item ? "is-on" : ""}><input type="radio" name={`call-outcome-${candidate.id}`} checked={outcome === item} onChange={() => { setOutcome(item); if (!kind || kind === MESSAGE_FOR_OUTCOME[outcome]) pickKind(MESSAGE_FOR_OUTCOME[item]); }} />{item}</label>)}
         </fieldset>
+        <div className="ats-call-msg">
+          <label htmlFor={`call-msg-kind-${candidate.id}`}>Send a follow-up (optional)</label>
+          <select id={`call-msg-kind-${candidate.id}`} value={kind} onChange={(event) => { const next = event.target.value as MessageKind | ""; if (next) pickKind(next); else { setKind(""); setDraft(""); } }}>
+            <option value="">No message</option>
+            {(Object.keys(MESSAGE_LABELS) as MessageKind[]).map((key) => <option key={key} value={key}>{MESSAGE_LABELS[key]}</option>)}
+          </select>
+          {kind && <>
+            <textarea aria-label="Message text" value={draft} onChange={(event) => setDraft(event.target.value)} />
+            <div className="ats-call-msg-actions">
+              <a href={whatsappLink(dial, draft)} target="_blank" rel="noopener noreferrer">Open in WhatsApp</a>
+              {candidate.email && <a href={mailLink(candidate.email, `Your application${roleTitle ? ` for ${roleTitle}` : ""}`, draft)}>Open in email</a>}
+            </div>
+            <small>Opens the message pre-written. You press send.</small>
+          </>}
+        </div>
         <label className="ats-call-note" htmlFor={`call-note-${candidate.id}`}>Note (optional)</label>
         <textarea id={`call-note-${candidate.id}`} value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="Example: confirmed notice period is 10 days" />
         {error && <p role="alert" className="ats-call-error">{error}</p>}

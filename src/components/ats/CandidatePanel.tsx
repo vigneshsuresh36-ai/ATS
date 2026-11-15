@@ -6,6 +6,7 @@ import { HiringAssistant } from "./HiringAssistant";
 import { CandidateCommunicationHistory } from "./CandidateCommunicationHistory";
 import { CandidateComments } from "./CandidateComments";
 import { CallCandidate } from "./CallCandidate";
+import { VoiceDictation } from "./VoiceDictation";
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
@@ -744,6 +745,7 @@ export function CandidatePanel({
             {(q.type === "scale" || q.type === "stars") && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{Array.from({ length: q.scaleMax }, (_, i) => i + 1).map((n) => <button key={n} type="button" aria-label={`${n} of ${q.scaleMax}`} aria-pressed={value === String(n)} onClick={() => update(String(n))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #cad5e2", background: value === String(n) ? "#dcefe3" : "white", color: q.type === "stars" && Number(value) >= n ? "#c18b00" : "#344", fontSize: q.type === "stars" ? 22 : 13 }}>{q.type === "stars" ? "★" : n}</button>)}</div>}
           </fieldset>; })}
           <label style={lab}>Interview notes</label>
+          <VoiceDictation onText={(text) => setFb((current) => (current ? `${current} ${text}` : text))} />
           <textarea
             style={{ ...inp, minHeight: 70 }}
             placeholder="What went well, gaps, follow-ups…"

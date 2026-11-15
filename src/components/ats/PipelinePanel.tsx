@@ -12,6 +12,7 @@ import { canEditRequisitionPriority, isRequisitionClosed, isRequisitionOpenForRe
 import { joiningCountdownLabel, joiningTimeline } from "@/lib/joiningTimeline";
 import { ActivityHistory } from "./ActivityHistory";
 import { CallCandidate } from "./CallCandidate";
+import { dropoffRisk } from "@/lib/dropoffRisk";
 import { recruiterCollaborators } from "@/lib/recruiterAssignment";
 import { RoleHiringBrief } from "./RoleHiringBrief";
 import { RoleSummaryEditor } from "./RoleSummaryEditor";
@@ -94,6 +95,17 @@ export function PipelinePanel({
   onAddCandidate?: () => void;
   onScheduleCandidate?: (candidateId: string, roundIndex: number) => void;
 }) {
+  const [linkNote, setLinkNote] = useState("");
+  async function copyDecisionLink(candidateId: string, name: string) {
+    setLinkNote("");
+    try {
+      const response = await apiFetch(`/api/candidates/${candidateId}/decision-link`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not create the link.");
+      try { await navigator.clipboard.writeText(result.url); setLinkNote(`Approval link for ${name} copied. Send it to the hiring manager; it works for ${result.expiresInDays} days.`); }
+      catch { setLinkNote(`Approval link for ${name}: ${result.url}`); }
+    } catch (cause) { setLinkNote(cause instanceof Error ? cause.message : "Could not create the link."); }
+  }
   const [assignedCollaborators, setAssignedCollaborators] = useState(req.recruiterCollaboratorEmails || []);
   const collaboratorsChanged = recruiterCollaborators(assignedCollaborators).join(",") !== recruiterCollaborators(req.recruiterCollaboratorEmails).join(",");
   const [assignedRecruiter, setAssignedRecruiter] = useState(req.recruiterEmail || "");
@@ -606,6 +618,7 @@ export function PipelinePanel({
       {candidates.length > 0 && <p className="ats-cv-match-hint">Compare CVs reviews the candidates on this page. Scores show the share of identified job requirements with verified CV evidence; review the evidence before deciding.</p>}
       {candidates.length === 0 && <div className="ats-pipeline-empty-illustration"><img src="/candidate-empty-state.png" alt="" width={240} height={160} /><strong>No candidates yet</strong><p>Candidates added to this position will appear here.</p>{canAdd && onAddCandidate && <button type="button" className="ats-pipeline-action" onClick={onAddCandidate}>＋ Add candidate</button>}</div>}
 
+      {linkNote && <p role="status" className="ats-link-note">{linkNote}</p>}
       {candidates.length > 0 && (
         <div className="ats-pipeline-candidate-table">
           <table className="ats-table ats-pipeline-table">
@@ -619,7 +632,7 @@ export function PipelinePanel({
               const expanded = expandedCvMatch === candidate.id;
               return <Fragment key={candidate.id}><tr className="ats-pipeline-candidate-row" onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, select, textarea")) onCand(candidate.id); }}>
                 <td><button type="button" className="ats-pipeline-candidate-person" onClick={() => onCand(candidate.id)}><span className="ats-pipeline-candidate-avatar">{candidate.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><span><strong>{candidate.name}</strong><small>{candidate.email || "No email provided"}</small>{candidate.candidateId && <small className="ats-candidate-id-subtle">{candidate.candidateId}</small>}</span></button></td>
-                <td><span className={`ats-pipeline-stage-pill ${["Rejected", "Social CV Reject", "Candidate Backed Out"].includes(candidate.stage) ? "is-rejected" : ["HMApproved", "Selected", "OfferApproved", "Offered", "Onboarded"].includes(candidate.stage) ? "is-approved" : ["PendingHMApproval", "OfferApprovalPending", "On Hold"].includes(candidate.stage) ? "is-review" : candidate.stage === "New" ? "is-new" : "is-progress"}`}>{prettyStatus(candidate.stage)}</span></td>
+                <td><span className={`ats-pipeline-stage-pill ${["Rejected", "Social CV Reject", "Candidate Backed Out"].includes(candidate.stage) ? "is-rejected" : ["HMApproved", "Selected", "OfferApproved", "Offered", "Onboarded"].includes(candidate.stage) ? "is-approved" : ["PendingHMApproval", "OfferApprovalPending", "On Hold"].includes(candidate.stage) ? "is-review" : candidate.stage === "New" ? "is-new" : "is-progress"}`}>{prettyStatus(candidate.stage)}</span>{(() => { const risk = dropoffRisk(candidate, Math.floor((Date.now() - new Date(candidate.updatedAt || candidate.createdAt).getTime()) / 86400000)); return risk && canRecruit(role) ? <span className={`ats-risk-pill is-${risk.level.toLowerCase()}`} title={risk.reasons.join(". ")}>{risk.level} drop-off risk</span> : null; })()}</td>
                 <td>{candidateInterviewCount}</td>
                 <td>{candidate.experienceYears != null ? `${candidate.experienceYears} years` : "—"}</td>
                 <td>{!result ? <span className="ats-cv-match-pending">Not reviewed</span> : stale ? <span className="ats-cv-match-pending">Needs refresh</span> : result.status !== "ready" ? <span className="ats-cv-match-unavailable"><span className="ats-cv-match-pending">Not reviewed</span><small>{result.message}</small></span> : <button type="button" className="ats-cv-match-score" aria-expanded={expanded} onClick={() => setExpandedCvMatch(expanded ? null : candidate.id)}><strong>{result.score}% match</strong><small>AI estimate · {expanded ? "Hide evidence" : "View evidence"}</small></button>}</td>
@@ -628,7 +641,8 @@ export function PipelinePanel({
                 <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions">
                   {(candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && canRecruit(role) && <><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, "PendingHMApproval")}>{socialCvReviewId === candidate.id ? "Saving…" : "Select CV"}</button><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject")}>Reject CV</button></>}
                   {candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") && <><button type="button" data-hm-decision="approve" onClick={() => void hmDecide(candidate.id, "hmApprove")}>Approve</button><button type="button" data-hm-decision="reject" onClick={() => void hmDecide(candidate.id, "hmReject")}>Reject</button></>}
-                  {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" />}
+                  {candidate.stage === "PendingHMApproval" && canRecruit(role) && <button type="button" onClick={() => void copyDecisionLink(candidate.id, candidate.name)}>Copy approval link</button>}
+                  {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" roleTitle={req.title} />}
                   {canRecruit(role) && onScheduleCandidate && schedulableRound !== null && <button type="button" onClick={() => onScheduleCandidate(candidate.id, schedulableRound)}>Schedule interview · Round {schedulableRound}</button>}
                   {candidate.stage === "Selected" && canRecruit(role) && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending) && <button type="button" onClick={() => onCand(candidate.id)}>Offer stage</button>}
                   {canRecruit(role) && feedbackPending && <button type="button" onClick={() => onCand(candidate.id)}>Add feedback</button>}

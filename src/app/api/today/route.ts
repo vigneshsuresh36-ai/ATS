@@ -2,6 +2,8 @@ import { canViewScopedRequisition } from "@/lib/requisitionScope";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { errResponse, json, requireUser } from "@/lib/auth";
+import { dropoffRisk } from "@/lib/dropoffRisk";
+import { buildPriorityList } from "@/lib/priorityList";
 import {
   getOrg,
   listCandidates,
@@ -159,7 +161,24 @@ export async function GET(req: NextRequest) {
     const offersPending = cands
       .filter((c) => c.offerApprovalStatus === "Pending" || c.stage === "OfferApprovalPending");
 
+    const atRisk = cands
+      .map((c) => {
+        const since = lastChange.get(c.id) || new Date(c.createdAt).getTime();
+        const risk = dropoffRisk(c, Math.floor((now - since) / 86400000));
+        return risk ? { id: c.id, name: c.name, ...risk } : null;
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item);
+    const priority = buildPriorityList({
+      interviewsToday,
+      awaitingFb: awaitingFb.filter((item): item is NonNullable<typeof item> => !!item),
+      offersPending,
+      stuck,
+      toSchedule: interviewsToSchedule.filter((c) => c.stage === "HMApproved"),
+      atRisk,
+    });
+
     return json({
+      priority,
       newApps,
       awaitingFb,
       debriefs,
