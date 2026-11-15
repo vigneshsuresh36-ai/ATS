@@ -12,6 +12,7 @@ import { canEditRequisitionPriority, isRequisitionClosed, isRequisitionOpenForRe
 import { joiningCountdownLabel, joiningTimeline } from "@/lib/joiningTimeline";
 import { ActivityHistory } from "./ActivityHistory";
 import { CallCandidate } from "./CallCandidate";
+import { RowMenu } from "./RowMenu";
 import { dropoffRisk } from "@/lib/dropoffRisk";
 import { recruiterCollaborators } from "@/lib/recruiterAssignment";
 import { RoleHiringBrief } from "./RoleHiringBrief";
@@ -78,6 +79,7 @@ export function PipelinePanel({
   onCand,
   onAddCandidate,
   onScheduleCandidate,
+  onCandAction,
 }: {
   req: Requisition;
   initialDetailsPage?: boolean;
@@ -94,6 +96,8 @@ export function PipelinePanel({
   onCand: (id: string) => void;
   onAddCandidate?: () => void;
   onScheduleCandidate?: (candidateId: string, roundIndex: number) => void;
+  /** Opens feedback, debrief or offer in a side panel without leaving the pipeline. */
+  onCandAction?: (candidateId: string, section: "feedback" | "debrief" | "offer") => void;
 }) {
   const [assignedCollaborators, setAssignedCollaborators] = useState(req.recruiterCollaboratorEmails || []);
   const collaboratorsChanged = recruiterCollaborators(assignedCollaborators).join(",") !== recruiterCollaborators(req.recruiterCollaboratorEmails).join(",");
@@ -305,6 +309,32 @@ export function PipelinePanel({
       }
     } catch (error) { setCvMatchError(error instanceof Error ? error.message : "Could not compare CVs."); }
     finally { setCvMatchBusy(false); }
+  }
+
+  type NextStep = { label: string; onClick: () => void; disabled?: boolean; danger?: boolean };
+  /** The first step is the row's main button; the rest go into its "more" menu. */
+  function nextSteps(candidate: Candidate, schedulableRound: number | null, feedbackPending: boolean): NextStep[] {
+    const steps: NextStep[] = [];
+    const recruiter = canRecruit(role);
+    const open = (section: "feedback" | "debrief" | "offer") => (onCandAction ? onCandAction(candidate.id, section) : onCand(candidate.id));
+    if ((candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && recruiter) {
+      const saving = socialCvReviewId === candidate.id;
+      steps.push({ label: saving ? "Saving…" : "Select CV", disabled: saving, onClick: () => void reviewSocialCv(candidate, "PendingHMApproval") });
+      steps.push({ label: "Reject CV", danger: true, disabled: saving, onClick: () => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject") });
+    }
+    if (candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin")) {
+      steps.push({ label: "Approve", onClick: () => void hmDecide(candidate.id, "hmApprove") });
+      steps.push({ label: "Reject", danger: true, onClick: () => void hmDecide(candidate.id, "hmReject") });
+    }
+    if (recruiter && feedbackPending) steps.push({ label: "Add feedback", onClick: () => open("feedback") });
+    const live = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Rescheduled");
+    const latestRound = live.reduce((max, interview) => Math.max(max, interview.roundIndex || 1), 0);
+    const debrief = (recruiter || isHmOwner) && (/debrief/i.test(candidate.stage) ||
+      (["Selected", "Interview Scheduled"].includes(candidate.stage) && live.length > 0 && !live.some((interview) => interview.feedbackPending) && latestRound > (candidate.lastAdvancedRound || 0)));
+    if (debrief) steps.push({ label: "Decide: advance or reject", onClick: () => open("debrief") });
+    if (recruiter && onScheduleCandidate && schedulableRound !== null) steps.push({ label: `Schedule interview · Round ${schedulableRound}`, onClick: () => onScheduleCandidate(candidate.id, schedulableRound) });
+    if (candidate.stage === "Selected" && recruiter && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !feedbackPending) steps.push({ label: "Request offer", onClick: () => open("offer") });
+    return steps;
   }
 
   async function hmDecide(
@@ -626,13 +656,15 @@ export function PipelinePanel({
                 <td>{!result ? <span className="ats-cv-match-pending">Not reviewed</span> : stale ? <span className="ats-cv-match-pending">Needs refresh</span> : result.status !== "ready" ? <span className="ats-cv-match-unavailable"><span className="ats-cv-match-pending">Not reviewed</span><small>{result.message}</small></span> : <button type="button" className="ats-cv-match-score" aria-expanded={expanded} onClick={() => setExpandedCvMatch(expanded ? null : candidate.id)}><strong>{result.score}% match</strong><small>AI estimate · {expanded ? "Hide evidence" : "View evidence"}</small></button>}</td>
                 <td>{candidate.expectedCtc || "—"}</td>
                 <td>{candidate.notice || "—"}</td>
-                <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions">
-                  {(candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && canRecruit(role) && <><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, "PendingHMApproval")}>{socialCvReviewId === candidate.id ? "Saving…" : "Select CV"}</button><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject")}>Reject CV</button></>}
-                  {candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") && <><button type="button" data-hm-decision="approve" onClick={() => void hmDecide(candidate.id, "hmApprove")}>Approve</button><button type="button" data-hm-decision="reject" onClick={() => void hmDecide(candidate.id, "hmReject")}>Reject</button></>}
-                  {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" roleTitle={req.title} />}
-                  {canRecruit(role) && onScheduleCandidate && schedulableRound !== null && <button type="button" onClick={() => onScheduleCandidate(candidate.id, schedulableRound)}>Schedule interview · Round {schedulableRound}</button>}
-                  {candidate.stage === "Selected" && canRecruit(role) && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending) && <button type="button" onClick={() => onCand(candidate.id)}>Offer stage</button>}
-                  {canRecruit(role) && feedbackPending && <button type="button" onClick={() => onCand(candidate.id)}>Add feedback</button>}
+                <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions ats-next-actions">
+                  {(() => {
+                    const [primary, ...rest] = nextSteps(candidate, schedulableRound, feedbackPending);
+                    return <>
+                      {primary && <button type="button" className="ats-next-btn" disabled={primary.disabled} onClick={primary.onClick}>{primary.label}</button>}
+                      {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" roleTitle={req.title} />}
+                      <RowMenu label={`More actions for ${candidate.name}`} items={[...rest, { label: "View candidate", onClick: () => onCand(candidate.id) }]} />
+                    </>;
+                  })()}
                 </div></td>
               </tr>{expanded && result?.status === "ready" && !stale && <tr className="ats-cv-evidence-row"><td colSpan={8}><section className="ats-cv-evidence" aria-label={`CV match evidence for ${candidate.name}`}><div className="ats-cv-evidence-heading"><strong>CV / JD match evidence</strong><span>AI can miss details. Review the CV before deciding.</span></div><div className="ats-cv-evidence-list">{result.items?.map((item, index) => <div key={index}><span>{item.requirement}</span><span>{item.evidence}</span><b>{item.found ? "Found in CV" : "Not verified"}</b></div>)}</div><small>{result.message}. The percentage is the number of requirements with verified evidence divided by the requirements identified by AI; it is not a hiring recommendation.</small></section></td></tr>}</Fragment>;
             })}</tbody>

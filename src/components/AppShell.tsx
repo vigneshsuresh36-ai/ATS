@@ -145,6 +145,13 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
   const [panel, setPanel] = useState<ReactNode>(null);
   const [candidatePage, setCandidatePage] = useState(false);
   const [pipelinePanel, setPipelinePanel] = useState<ReactNode>(null);
+  const [drawer, setDrawer] = useState<ReactNode>(null);
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setDrawer(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawer]);
   const panelDismiss = useRef<(() => void) | null>(null);
   const [today, setToday] = useState<Record<string, unknown> | null>(null);
   const [reqs, setReqs] = useState<Requisition[]>([]);
@@ -496,6 +503,36 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
     setOverlay(false);
   }
 
+  /** Opens feedback, debrief or offer in a side panel on top of the pipeline. */
+  async function openCandidateDrawer(id: string, section: "feedback" | "debrief" | "offer", reqId: string) {
+    const [{ CandidatePanel }, r] = await Promise.all([
+      import("@/components/ats/CandidatePanel"),
+      apiFetch(`/api/candidates/${id}`),
+    ]);
+    const d = await r.json();
+    if (!r.ok) {
+      setMsg(d.error);
+      return;
+    }
+    const reqMeta = reqs.find((x) => x.id === (d.candidate as { reqId: string }).reqId);
+    const hmOwner = !!profile?.email && !!reqMeta && reqMeta.raisedByEmail === profile.email.toLowerCase();
+    setDrawer(
+      <CandidatePanel
+        key={`${id}-${section}`}
+        mode="drawer"
+        section={section}
+        data={d}
+        role={role!}
+        org={orgSettings}
+        isHmOwner={hmOwner || role === "Admin"}
+        onClose={() => setDrawer(null)}
+        apiFetch={apiFetch}
+        onRefresh={() => { setDrawer(null); void openPipeline(reqId); }}
+        onOpenApplication={async () => undefined}
+      />
+    );
+  }
+
   async function openPipeline(reqId: string, showDetails = false) {
     setCandidatePage(false);
     const encodedId = encodeURIComponent(reqId);
@@ -532,6 +569,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
         apiFetch={apiFetch}
         onRefresh={() => openPipeline(reqId, showDetails)}
         onCand={(candidateId) => { void openCandidate(candidateId, reqId); }}
+        onCandAction={(candidateId, section) => { void openCandidateDrawer(candidateId, section, reqId); }}
         onAddCandidate={() => openAddCandidate(reqId, rd.requisition.title)}
         onScheduleCandidate={(candidateId, roundIndex) => {
           closeModal();
@@ -1104,6 +1142,11 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
             </button>
             {panel}
           </div>
+        </div>
+      )}
+      {drawer && (
+        <div className="ats-drawer-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setDrawer(null); }}>
+          <aside className="ats-drawer" role="dialog" aria-modal="true">{drawer}</aside>
         </div>
       )}
     </div>

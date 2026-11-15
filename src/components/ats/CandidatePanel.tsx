@@ -38,6 +38,8 @@ export function CandidatePanel({
   onRefresh,
   onOpenApplication,
   onScheduleRound,
+  mode = "page",
+  section,
 }: {
   data: {
     candidate: Candidate;
@@ -69,6 +71,9 @@ export function CandidatePanel({
   onRefresh: () => void;
   onOpenApplication: (applicationRecordId: string) => Promise<void>;
   onScheduleRound?: (roundIndex: number) => void;
+  /** "drawer" shows only one working section for use in a side panel. */
+  mode?: "page" | "drawer";
+  section?: "feedback" | "debrief" | "offer";
 }) {
   const c = data.candidate;
   const requisition = data.requisition;
@@ -234,6 +239,30 @@ export function CandidatePanel({
         activeInterviews.length > 0 &&
         feedbackList.length >= activeInterviews.length &&
         (c.stage === "Selected" || c.stage === "Interview Scheduled")));
+  const inDrawer = mode === "drawer";
+  type Tab = "interviews" | "offer" | "cv" | "activity";
+  const [tab, setTab] = useState<Tab>(canRequestOffer || canDecideOffer ? "offer" : "interviews");
+  type Block = "stage" | "feedback" | "debrief" | "interviews" | "offer" | "joining" | "activity" | "cv";
+  const blockTab: Record<Block, Tab> = { stage: "interviews", feedback: "interviews", debrief: "interviews", interviews: "interviews", offer: "offer", joining: "offer", activity: "activity", cv: "cv" };
+  const show = (block: Block) => inDrawer
+    ? (section === "feedback" && block === "feedback") || (section === "debrief" && (block === "debrief" || block === "feedback")) || (section === "offer" && block === "offer")
+    : blockTab[block] === tab;
+  function goTo(next: Tab, anchor?: string) {
+    setTab(next);
+    if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+  const nextStep: { title: string; text?: string; label?: string; action?: () => void } | null = inDrawer ? null
+    : showFeedbackForm && canRecruit(role) ? { title: "Add interview feedback", text: `Feedback for ${pendingInterview?.roundName || "the latest round"} is still missing.`, label: "Add feedback", action: () => goTo("interviews", "ats-feedback-anchor") }
+    : showDebrief ? { title: "Decide: advance, hold or reject", text: "All feedback for the latest round is in.", label: "Open decision", action: () => goTo("interviews", "ats-debrief-anchor") }
+    : canRequestOffer ? { title: "Request offer approval", text: "All interview rounds are complete.", label: "Request offer", action: () => goTo("offer") }
+    : canDecideOffer ? { title: "An offer is waiting for your decision", label: "Review offer", action: () => goTo("offer") }
+    : canScheduleNext ? { title: `Schedule Round ${nextRoundIndex}${nextRoundMeta?.name ? `: ${nextRoundMeta.name}` : ""}`, label: "Schedule", action: () => onScheduleRound?.(nextRoundIndex) }
+    : c.stage === "PendingHMApproval" ? (isHmOwner || role === "Admin"
+      ? { title: "Approve or reject this candidate", label: "Review", action: () => goTo("interviews") }
+      : { title: "Waiting for hiring manager approval", text: "Interviews can be scheduled once the hiring manager approves." })
+    : null;
+  const tabLabels: [Tab, string][] = [["interviews", "Interviews & feedback"], ["offer", "Offer"], ["cv", "CV"], ["activity", "Activity & comments"]];
+
   async function hmDecide(action: "hmApprove" | "hmReject") {
     let reason: string | undefined;
     if (action === "hmReject") {
@@ -363,7 +392,9 @@ export function CandidatePanel({
   }
 
   return (
-    <div className="ats-profile ats-profile-redesign">
+    <div className={inDrawer ? "ats-profile ats-profile-drawer" : "ats-profile ats-profile-redesign"}>
+      {inDrawer && <header className="ats-drawer-head"><div><h3>{section === "offer" ? "Request offer" : section === "debrief" ? "Debrief decision" : "Add feedback"}</h3><small>{c.name}{requisition?.title ? ` · ${requisition.title}` : ""}</small></div><button type="button" className="ats-drawer-close" aria-label="Close" onClick={onClose}>×</button></header>}
+      {!inDrawer && <>
       <div className="ats-profile-utility"><div className="ats-profile-breadcrumbs"><button type="button" className="ats-profile-back" onClick={onClose}>← Hiring Requests</button><span>/</span><span>{requisition?.title || "Candidate"}</span><span>/</span><strong>{c.name}</strong></div></div>
       <header className="ats-profile-header">
         <div>
@@ -375,8 +406,9 @@ export function CandidatePanel({
       </header>
       {reopenError && <p role="alert">{reopenError}</p>}
       {c.previousApplicationRecordId && <button type="button" className="ats-profile-back" onClick={() => void onOpenApplication(c.previousApplicationRecordId!)}>View previous application</button>}
-      <div className="ats-profile-columns">
-        <div>
+      </>}
+      <div className={inDrawer ? undefined : "ats-profile-layout"}>
+        {!inDrawer && <aside className="ats-profile-side">
           <section className="ats-profile-section ats-profile-details"><header><h4>Candidate details</h4></header><div className="ats-profile-grid">
             {c.applicationId && <DetailItem label="Application ID" value={c.applicationId} />}<DetailItem label="Email" value={c.email || "—"} /><DetailItem label="Phone" value={c.phone || "—"} /><DetailItem label="Location" value={c.location || "—"} /><DetailItem label="Experience" value={c.experienceYears === undefined ? "—" : `${c.experienceYears} years`} /><DetailItem label="Notice period" value={c.notice ? (/^\d+$/.test(c.notice.trim()) ? `${c.notice} days` : c.notice) : "—"} /><DetailItem label="Source" value={c.source ? `${candidateSourceLabel(c.source) || c.source}${c.sourceDetail ? ` · ${c.sourceDetail}` : ""}` : "—"} /><DetailItem label="Skills" value={c.skills?.length ? c.skills.join(", ") : "Not recorded"} />
             {c.customFields?.map((field) => <DetailItem key={field.id} label={field.label} value={field.value} />)}
@@ -384,14 +416,17 @@ export function CandidatePanel({
           <section className="ats-profile-section ats-profile-compensation"><header><h4>Compensation</h4></header><div className="ats-profile-grid"><DetailItem label="Fixed" value={c.currentFixedCtc || c.currentCtc || "—"} /><DetailItem label="Variable" value={c.currentVariableCtc || "—"} /><DetailItem label="ESOPs" value={c.presentEsops || "—"} /><DetailItem label="Expected" value={c.expectedCtc || "—"} /></div></section>
           {c.remarks && <section className="ats-profile-section"><header><h4>Recruiter notes</h4></header><div className="ats-profile-recruiter-notes">{c.remarks}</div></section>}
 
-        </div>
-        <div className="ats-profile-cv-column">
+        </aside>}
+        <div className="ats-profile-main">
+        {nextStep && <div className="ats-next-card"><div><small>Next step</small><h2>{nextStep.title}</h2>{nextStep.text && <p>{nextStep.text}</p>}</div>{nextStep.action && nextStep.label && <button type="button" onClick={nextStep.action}>{nextStep.label}</button>}</div>}
+        {!inDrawer && <div className="ats-tabs" role="tablist" aria-label="Candidate sections">{tabLabels.map(([id, label]) => <button type="button" role="tab" key={id} id={`ats-tab-${id}`} aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>{label}</button>)}</div>}
+        {show("cv") && <div className="ats-profile-cv-column">
         <section className="ats-profile-cv-panel">
           {cvPreview ? <iframe title="Candidate CV" src={`${cvPreview}#navpanes=0&view=FitH`} /> : <div className="ats-profile-cv-empty">{cvError ? `CV preview unavailable: ${cvError}` : !c.cvPath ? "No CV attached." : /\.pdf$/i.test(c.cvFileName || "") ? "Loading CV…" : "Preview is available for PDF files. Use View CV to open this file."}</div>}</section>
 
 
-        </div>
-      </div>
+        </div>}
+        {show("activity") && <>
         <section id="ats-profile-activity" className="ats-profile-section ats-profile-tools"><header><h4>Activity &amp; history</h4><p>Screening results, communication history and interview progress.</p></header><div className="ats-profile-tool-list">
           {(role === "Admin" || role === "Recruiter" || role === "HiringManager") && <details className="premium-candidate-evidence"><summary>AI screening: evidence against role requirements</summary><HiringAssistant key={c.id} apiFetch={apiFetch} mode="candidate" candidateId={c.id} embedded /></details>}
           {(role === "Admin" || role === "Recruiter") && <CandidateCommunicationHistory key={c.id} candidateId={c.id} apiFetch={apiFetch} />}
@@ -418,7 +453,8 @@ export function CandidatePanel({
       </details>
       <CandidateComments key={c.id} candidateId={c.id} apiFetch={apiFetch} />
             </div></section>
-      {org?.offerJoiningEnabled && (role === "Admin" || role === "Recruiter") && (c.stage === "Offered" || c.stage === "Onboarded" || c.joiningStatus || c.initialDoj || c.currentDoj) && (
+        </>}
+      {show("joining") && org?.offerJoiningEnabled && (role === "Admin" || role === "Recruiter") && (c.stage === "Offered" || c.stage === "Onboarded" || c.joiningStatus || c.initialDoj || c.currentDoj) && (
         <section className="ats-candidate-joining-details">
           <h4>Offer &amp; Joining Details</h4>
           <div>
@@ -432,6 +468,7 @@ export function CandidatePanel({
           </div>
         </section>
       )}
+      {show("stage") && <>
       {c.hmRejectReason && (
         <div style={{ fontSize: 13, color: "#9a3b3b", marginBottom: 10 }}>
           Rejected: {c.hmRejectReason}
@@ -556,6 +593,9 @@ export function CandidatePanel({
         )
       )}
 
+      </>}
+
+      {show("offer") && <>
       {c.offerApprovalStatus && (
         <section className="ats-offer-review">
           <div className="ats-offer-review-head">
@@ -677,7 +717,10 @@ export function CandidatePanel({
           </button>
         </div>
       )}
+      </>}
 
+      {show("feedback") && <>
+      <span id="ats-feedback-anchor" />
       <h4>Feedback</h4>
       <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
         Interviewer notes after a round — rating and hire recommendation.
@@ -837,6 +880,9 @@ export function CandidatePanel({
           </button>
         </>
       )}
+      </>}
+      {show("debrief") && <>
+      <span id="ats-debrief-anchor" />
       {showDebrief && (
           <div style={{ marginTop: 16 }}>
             <h4>Debrief decision</h4>
@@ -872,6 +918,8 @@ export function CandidatePanel({
             </div>
           </div>
         )}
+      </>}
+      {show("interviews") && <>
       <h4>Interviews</h4>
       {(data.interviews || []).length === 0 && (
         <div style={{ color: "#aaa", fontSize: 13 }}>None scheduled</div>
@@ -926,6 +974,9 @@ export function CandidatePanel({
           )}
         </div>
       ))}
+      </>}
+        </div>
+      </div>
     </div>
   );
 }
