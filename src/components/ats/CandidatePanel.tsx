@@ -407,8 +407,8 @@ export function CandidatePanel({
       {reopenError && <p role="alert">{reopenError}</p>}
       {c.previousApplicationRecordId && <button type="button" className="ats-profile-back" onClick={() => void onOpenApplication(c.previousApplicationRecordId!)}>View previous application</button>}
       </>}
-      <div className={inDrawer ? undefined : "ats-profile-layout"}>
-        {!inDrawer && <aside className="ats-profile-side">
+      <div className={inDrawer ? undefined : "ats-cand-layout"} style={inDrawer ? undefined : { display: "grid", gridTemplateColumns: "360px minmax(0, 1fr)", columnGap: 24, rowGap: 16, alignItems: "start", width: "100%", margin: 0, padding: 0 }}>
+        {!inDrawer && <aside className="ats-cand-side" style={{ position: "sticky", top: 84, display: "grid", gap: 16, width: "100%", minWidth: 0, margin: 0, padding: 0, background: "transparent", border: 0 }}>
           <section className="ats-profile-section ats-profile-details"><header><h4>Candidate details</h4></header><div className="ats-profile-grid">
             {c.applicationId && <DetailItem label="Application ID" value={c.applicationId} />}<DetailItem label="Email" value={c.email || "—"} /><DetailItem label="Phone" value={c.phone || "—"} /><DetailItem label="Location" value={c.location || "—"} /><DetailItem label="Experience" value={c.experienceYears === undefined ? "—" : `${c.experienceYears} years`} /><DetailItem label="Notice period" value={c.notice ? (/^\d+$/.test(c.notice.trim()) ? `${c.notice} days` : c.notice) : "—"} /><DetailItem label="Source" value={c.source ? `${candidateSourceLabel(c.source) || c.source}${c.sourceDetail ? ` · ${c.sourceDetail}` : ""}` : "—"} /><DetailItem label="Skills" value={c.skills?.length ? c.skills.join(", ") : "Not recorded"} />
             {c.customFields?.map((field) => <DetailItem key={field.id} label={field.label} value={field.value} />)}
@@ -417,7 +417,7 @@ export function CandidatePanel({
           {c.remarks && <section className="ats-profile-section"><header><h4>Recruiter notes</h4></header><div className="ats-profile-recruiter-notes">{c.remarks}</div></section>}
 
         </aside>}
-        <div className="ats-profile-main">
+        <div className="ats-cand-main" style={{ width: "100%", minWidth: 0, margin: 0, padding: 0 }}>
         {nextStep && <div className="ats-next-card"><div><small>Next step</small><h2>{nextStep.title}</h2>{nextStep.text && <p>{nextStep.text}</p>}</div>{nextStep.action && nextStep.label && <button type="button" onClick={nextStep.action}>{nextStep.label}</button>}</div>}
         {!inDrawer && <div className="ats-tabs" role="tablist" aria-label="Candidate sections">{tabLabels.map(([id, label]) => <button type="button" role="tab" key={id} id={`ats-tab-${id}`} aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>{label}</button>)}</div>}
         {show("cv") && <div className="ats-profile-cv-column">
@@ -520,7 +520,7 @@ export function CandidatePanel({
         </div>
       )}
 
-      {canScheduleNext && (
+      {canScheduleNext && nextStep?.label !== "Schedule" && (
         <button
           type="button"
           style={{ ...saveBtn, marginBottom: 14 }}
@@ -584,7 +584,7 @@ export function CandidatePanel({
           </button>
         </div>
       ) : (
-        canRecruit(role) &&
+        canRecruit(role) && !nextStep &&
         c.stage !== "PendingHMApproval" && (
           <p style={{ fontSize: 12, color: "#888", marginTop: 12 }}>
             Stage is managed by the interview workflow (schedule → feedback →
@@ -719,7 +719,7 @@ export function CandidatePanel({
       )}
       </>}
 
-      {show("feedback") && <>
+      {show("feedback") && (inDrawer || feedbackList.length > 0 || showFeedbackForm) && <>
       <span id="ats-feedback-anchor" />
       <h4>Feedback</h4>
       <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
@@ -730,22 +730,18 @@ export function CandidatePanel({
           ? data.interviews.find((interview) => interview.id === f.interviewId)
           : undefined;
         return (
-        <div
-          key={i}
-          style={{
-            border: "1px solid #ebe6da",
-            borderRadius: 10,
-            padding: 10,
-            marginBottom: 8,
-            fontSize: 13,
-          }}
-        >
-          <b>{feedbackInterview ? `Round ${feedbackInterview.roundIndex || 1}` : "Interview"}</b> · {f.interviewer} — {f.recommendation} ·{" "}
-          <span aria-label={`${f.rating} of 5`}>
-            {"★".repeat(Math.max(0, Math.min(5, f.rating || 0)))}
-            {"☆".repeat(Math.max(0, 5 - Math.min(5, f.rating || 0)))}
-          </span>
-          <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{f.feedback}</div>
+        <div key={i} className="ats-fb-card">
+          <div className="ats-fb-head">
+            <div><b>{feedbackInterview ? `Round ${feedbackInterview.roundIndex || 1}` : "Interview"}</b><small>{f.interviewer}</small></div>
+            <div className="ats-fb-right">
+              <span className={`ats-fb-pill is-${String(f.recommendation || "").toLowerCase()}`}>{f.recommendation}</span>
+              <span className="ats-fb-stars" aria-label={`${f.rating} of 5`}>
+                {"★".repeat(Math.max(0, Math.min(5, f.rating || 0)))}
+                <i>{"★".repeat(Math.max(0, 5 - Math.min(5, f.rating || 0)))}</i>
+              </span>
+            </div>
+          </div>
+          {f.feedback && <div className="ats-fb-notes">{f.feedback}</div>}
           {f.customAnswers?.map((item, index) => <div key={index} style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><strong>{item.question}</strong><div>{item.answer?.startsWith("[") ? (() => { try { const parsed = JSON.parse(item.answer); return Array.isArray(parsed) ? parsed.join(", ") : item.answer; } catch { return item.answer; } })() : item.answer || "—"}</div></div>)}
         </div>
         );
@@ -884,17 +880,14 @@ export function CandidatePanel({
       {show("debrief") && <>
       <span id="ats-debrief-anchor" />
       {showDebrief && (
-          <div style={{ marginTop: 16 }}>
+          <div className="ats-debrief-card">
             <h4>Debrief decision</h4>
-            <div style={{ display: "flex", gap: 8 }}>
+            <p>Choose what happens next for this candidate.</p>
+            <div className="ats-debrief-actions">
               {["Advance", "Hold", "Reject"].map((dec) => (
                 <button
                   key={dec}
-                  style={
-                    dec === "Reject"
-                      ? { ...cancelBtn, background: "#f3d4d4" }
-                      : saveBtn
-                  }
+                  className={dec === "Reject" ? "ats-debrief-reject" : "ats-debrief-btn"}
                   onClick={async () => {
                     const r = await apiFetch(`/api/candidates/${c.id}`, {
                       method: "PATCH",
@@ -919,19 +912,17 @@ export function CandidatePanel({
           </div>
         )}
       </>}
-      {show("interviews") && <>
+      {show("interviews") && (data.interviews || []).length === 0 && feedbackList.length === 0 && !showFeedbackForm && <p className="ats-cand-empty">No interviews yet. Once a round is scheduled, it appears here with its feedback.</p>}
+      {show("interviews") && (data.interviews || []).length > 0 && <>
       <h4>Interviews</h4>
       {(data.interviews || []).length === 0 && (
         <div style={{ color: "#aaa", fontSize: 13 }}>None scheduled</div>
       )}
       {(data.interviews || []).map((iv) => (
-        <div key={iv.id} style={{ fontSize: 13, marginBottom: 10 }}>
-          <div>
+        <div key={iv.id} className="ats-iv-card">
+          <div className="ats-iv-head"><strong>{iv.roundName ? `Round ${iv.roundIndex}: ${iv.roundName}` : iv.stage}</strong><span className={`ats-iv-pill${/complet/i.test(iv.status) ? " is-done" : ""}`}>{iv.status}{iv.rescheduleRequestedBy ? ` · ${iv.rescheduleRequestedBy} requested` : ""}</span></div>
+          <div className="ats-iv-meta">
             {formatDateTime(iv.datetime)}
-            {iv.roundName
-              ? ` · Round ${iv.roundIndex}: ${iv.roundName}`
-              : ` · ${iv.stage}`} {" "}
-            · {iv.status}{iv.rescheduleRequestedBy ? ` · ${iv.rescheduleRequestedBy} requested` : ""}
             {iv.format === "in-person" && iv.location && <> · {iv.location}</>}
             {iv.format === "phone" && <> · Telephonic{iv.phoneInstructions ? ` · ${iv.phoneInstructions}` : ""}</>}
             {iv.meetLink && (
