@@ -95,17 +95,6 @@ export function PipelinePanel({
   onAddCandidate?: () => void;
   onScheduleCandidate?: (candidateId: string, roundIndex: number) => void;
 }) {
-  const [linkNote, setLinkNote] = useState("");
-  async function copyDecisionLink(candidateId: string, name: string) {
-    setLinkNote("");
-    try {
-      const response = await apiFetch(`/api/candidates/${candidateId}/decision-link`, { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not create the link.");
-      try { await navigator.clipboard.writeText(result.url); setLinkNote(`Approval link for ${name} copied. Send it to the hiring manager; it works for ${result.expiresInDays} days.`); }
-      catch { setLinkNote(`Approval link for ${name}: ${result.url}`); }
-    } catch (cause) { setLinkNote(cause instanceof Error ? cause.message : "Could not create the link."); }
-  }
   const [assignedCollaborators, setAssignedCollaborators] = useState(req.recruiterCollaboratorEmails || []);
   const collaboratorsChanged = recruiterCollaborators(assignedCollaborators).join(",") !== recruiterCollaborators(req.recruiterCollaboratorEmails).join(",");
   const [assignedRecruiter, setAssignedRecruiter] = useState(req.recruiterEmail || "");
@@ -618,7 +607,6 @@ export function PipelinePanel({
       {candidates.length > 0 && <p className="ats-cv-match-hint">Compare CVs reviews the candidates on this page. Scores show the share of identified job requirements with verified CV evidence; review the evidence before deciding.</p>}
       {candidates.length === 0 && <div className="ats-pipeline-empty-illustration"><img src="/candidate-empty-state.png" alt="" width={240} height={160} /><strong>No candidates yet</strong><p>Candidates added to this position will appear here.</p>{canAdd && onAddCandidate && <button type="button" className="ats-pipeline-action" onClick={onAddCandidate}>＋ Add candidate</button>}</div>}
 
-      {linkNote && <p role="status" className="ats-link-note">{linkNote}</p>}
       {candidates.length > 0 && (
         <div className="ats-pipeline-candidate-table">
           <table className="ats-table ats-pipeline-table">
@@ -641,7 +629,6 @@ export function PipelinePanel({
                 <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions">
                   {(candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && canRecruit(role) && <><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, "PendingHMApproval")}>{socialCvReviewId === candidate.id ? "Saving…" : "Select CV"}</button><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject")}>Reject CV</button></>}
                   {candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") && <><button type="button" data-hm-decision="approve" onClick={() => void hmDecide(candidate.id, "hmApprove")}>Approve</button><button type="button" data-hm-decision="reject" onClick={() => void hmDecide(candidate.id, "hmReject")}>Reject</button></>}
-                  {candidate.stage === "PendingHMApproval" && canRecruit(role) && <button type="button" onClick={() => void copyDecisionLink(candidate.id, candidate.name)}>Copy approval link</button>}
                   {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" roleTitle={req.title} />}
                   {canRecruit(role) && onScheduleCandidate && schedulableRound !== null && <button type="button" onClick={() => onScheduleCandidate(candidate.id, schedulableRound)}>Schedule interview · Round {schedulableRound}</button>}
                   {candidate.stage === "Selected" && canRecruit(role) && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending) && <button type="button" onClick={() => onCand(candidate.id)}>Offer stage</button>}
