@@ -126,7 +126,7 @@ export function HiringManagerDashboard({
                     <tr key={String(requisition.id)}>
                       <td><button type="button" className="ats-link-btn" onClick={() => onReq(String(requisition.id))}>{String(requisition.title)}</button><div className="ats-sub">{String(requisition.id)}</div></td>
                       <td>{String(requisition.department)}</td>
-                      <td><span style={{ color: statusColor(String(requisition.status)), fontWeight: 650 }}>{prettyStatus(String(requisition.status))}</span></td>
+                      <td><span style={{ color: statusColor(String(requisition.status)), fontWeight: 700 }}>{prettyStatus(String(requisition.status))}</span></td>
                       <td className="num">{String(requisition.openings || 0)}</td>
                       <td className="num">{String(requisition.candidateCount || 0)}</td>
                       <td className="num">{String(counts.HMApproved || 0)}</td>
@@ -155,27 +155,27 @@ function Metric({ label, value, detail, accent }: { label: string; value: unknow
 }
 
 const heading: CSSProperties = { display: "flex", alignItems: "end", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "4px 0 14px" };
-const eyebrow: CSSProperties = { color: "#777", fontSize: 10, fontWeight: 750, letterSpacing: "0.08em" };
+const eyebrow: CSSProperties = { color: "#777", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em" };
 const period: CSSProperties = { color: "#777", fontSize: 12 };
 const metrics: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 9, marginBottom: 14 };
 const metric: CSSProperties = { minWidth: 0, padding: "12px 13px", border: "1px solid #e9e5dc", borderTop: "3px solid #3a6ea5", borderRadius: 9, background: "#fff" };
-const metricLabel: CSSProperties = { display: "block", fontSize: 11, fontWeight: 700 };
-const metricValue: CSSProperties = { display: "block", marginTop: 5, color: "#20272d", fontSize: 25, lineHeight: 1.1 };
-const metricDetail: CSSProperties = { display: "block", marginTop: 5, color: "#777", fontSize: 10 };
+const metricLabel: CSSProperties = { display: "block", fontSize: 12, fontWeight: 700 };
+const metricValue: CSSProperties = { display: "block", marginTop: 5, color: "#20272d", fontSize: 26, lineHeight: 1.1 };
+const metricDetail: CSSProperties = { display: "block", marginTop: 5, color: "#777", fontSize: 12 };
 const chartGrid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 14 };
 const panel: CSSProperties = { minWidth: 0, padding: 15, border: "1px solid #e9e5dc", borderRadius: 9, background: "#fff" };
 const panelHeading: CSSProperties = { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" };
-const totalBadge: CSSProperties = { padding: "4px 8px", borderRadius: 999, background: "#f1f3f5", color: "#59616b", fontSize: 10, fontWeight: 700 };
+const totalBadge: CSSProperties = { padding: "4px 8px", borderRadius: 999, background: "#f1f3f5", color: "#59616b", fontSize: 12, fontWeight: 700 };
 const stageList: CSSProperties = { display: "grid", gap: 10, marginTop: 13 };
 const stageRow: CSSProperties = { display: "grid", gridTemplateColumns: "minmax(100px, 1fr) minmax(80px, 2fr) 24px", alignItems: "center", gap: 8 };
-const stageName: CSSProperties = { overflow: "hidden", color: "#59616b", fontSize: 10, textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const stageName: CSSProperties = { overflow: "hidden", color: "#59616b", fontSize: 12, textOverflow: "ellipsis", whiteSpace: "nowrap" };
 const stageTrack: CSSProperties = { height: 8, overflow: "hidden", borderRadius: 999, background: "#f0ede7" };
 const stageBar: CSSProperties = { height: "100%", borderRadius: 999 };
-const stageCount: CSSProperties = { color: "#333", fontSize: 11, textAlign: "right" };
+const stageCount: CSSProperties = { color: "#333", fontSize: 12, textAlign: "right" };
 const roundChart: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(50px, 1fr))", alignItems: "end", gap: 8, height: 168, marginTop: 10, padding: "0 4px", borderBottom: "1px solid #e9e5dc" };
 const roundColumn: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", gap: 5, height: "100%" };
-const roundValue: CSSProperties = { color: "#4b5563", fontSize: 11 };
+const roundValue: CSSProperties = { color: "#4b5563", fontSize: 12 };
 const roundTrack: CSSProperties = { display: "flex", alignItems: "flex-end", justifyContent: "center", height: 116, width: "100%", borderBottom: "1px solid #f0ede7" };
 const roundBar: CSSProperties = { width: "min(30px, 70%)", borderRadius: "4px 4px 0 0", background: "#3a6ea5" };
-const axisLabel: CSSProperties = { color: "#777", fontSize: 10, textAlign: "center" };
+const axisLabel: CSSProperties = { color: "#777", fontSize: 12, textAlign: "center" };
 const empty: CSSProperties = { marginTop: 12, padding: 20, border: "1px dashed #e5e0d4", borderRadius: 7, color: "#888", textAlign: "center", fontSize: 12 };

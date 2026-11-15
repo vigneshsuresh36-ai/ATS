@@ -1,0 +1,35 @@
+/*
+  ATS typography, single source of truth.
+  Font: Calibri, with Carlito (metric-compatible, free) where Calibri is not installed.
+  Scale: 12 caption / 13 table + buttons / 14 body / 16 card heading / 20 section heading / 26 page title.
+  Weights: 400 regular, 600 emphasis, 700 headings.
+*/
+body {
+  --font-ui: Calibri, var(--font-carlito), Carlito, "Segoe UI", system-ui, sans-serif;
+  --fs-caption: 12px; --fs-table: 13px; --fs-body: 14px; --fs-card-title: 16px; --fs-section-title: 20px; --fs-page-title: 26px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font-family: var(--font-ui); }
+h1, h2, h3, h4, h5, h6 { font-family: var(--font-ui); font-weight: 700; }
+
+/* Page titles */
+.premium-workspace h1,
+.premium-workspace .ats-team-heading h2,
+.premium-workspace .hb-referrals-heading h2,
+.premium-workspace .premium-page-intro h2,
+.premium-workspace .ats-heading-primary,
+.ats-public-job h1 {
+  font-size: var(--fs-page-title) !important; font-weight: 700 !important; line-height: 1.2 !important; letter-spacing: -.01em !important;
+}
+/* Section headings */
+.premium-workspace .ats-heading-section,
+.premium-workspace .premium-section-heading h3 { font-size: var(--fs-section-title) !important; font-weight: 700 !important; letter-spacing: -.01em !important; }
+/* Card and panel headings */
+.premium-workspace .ats-heading-panel { font-size: var(--fs-card-title) !important; font-weight: 700 !important; }
+/* Small uppercase labels (table headers, field labels) */
+.premium-workspace th { font-size: var(--fs-caption); font-weight: 700; letter-spacing: .06em; }
+/* Tabular numbers where digits line up */
+.premium-workspace table td { font-variant-numeric: tabular-nums; }

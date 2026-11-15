@@ -22,6 +22,7 @@ export function CallCandidate({ candidate, apiFetch, variant = "default" }: Prop
   const [calls, setCalls] = useState<CallEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [qr, setQr] = useState("");
   const [error, setError] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
 
@@ -42,9 +43,16 @@ export function CallCandidate({ candidate, apiFetch, variant = "default" }: Prop
     return () => { active = false; };
   }, [open, apiFetch, candidate.id]);
 
-  function close() { setOpen(false); setError(""); setNote(""); setOutcome("Connected"); setCopied(false); }
+  function close() { setOpen(false); setError(""); setNote(""); setOutcome("Connected"); setCopied(false); setQr(""); }
   async function copyNumber() {
     try { await navigator.clipboard.writeText(dial); setCopied(true); } catch { setError("Could not copy. Select the number and copy it manually."); }
+  }
+  async function toggleQr() {
+    if (qr) { setQr(""); return; }
+    try {
+      const QRCode = (await import("qrcode")).default;
+      setQr(await QRCode.toDataURL(`tel:${dial}`, { margin: 1, width: 220 }));
+    } catch { setError("Could not create the QR code."); }
   }
   async function save() {
     setSaving(true); setError("");
@@ -68,8 +76,10 @@ export function CallCandidate({ candidate, apiFetch, variant = "default" }: Prop
         <p className="ats-call-sub">The call goes through your own phone. It does not cost the company anything.</p>
         <div className="ats-call-who"><span className="ats-call-avatar">{candidate.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><span><strong>{candidate.name}</strong><small>{displayNumber(dial)}</small></span></div>
         <a className="ats-call-now" href={`tel:${dial}`}>Call now</a>
-        <button type="button" className="ats-call-alt" onClick={() => void copyNumber()}>{copied ? "Number copied" : "Copy number to dial on my phone"}</button>
-        <p className="ats-call-hint">Opens the dialer on this device. On a computer, this works if your phone is linked (Phone Link on Windows, or iPhone calls on Mac). Otherwise copy the number.</p>
+        <button type="button" className="ats-call-alt" onClick={() => void toggleQr()}>{qr ? "Hide QR code" : "Send to my phone (scan QR)"}</button>
+        {qr && <div className="ats-call-qr"><img src={qr} alt={`QR code to call ${candidate.name}`} width={180} height={180} /><span>Scan with your phone camera to open the dialer with this number.</span></div>}
+        <button type="button" className="ats-call-copy" onClick={() => void copyNumber()}>{copied ? "Number copied" : "Copy number"}</button>
+        <p className="ats-call-hint">Call now opens the dialer on this device, or your call-from-browser extension if you use one. To call from your phone instead, scan the QR code.</p>
         <fieldset className="ats-call-outcomes"><legend>How did it go?</legend>
           {CALL_OUTCOMES.map((item) => <label key={item} className={outcome === item ? "is-on" : ""}><input type="radio" name={`call-outcome-${candidate.id}`} checked={outcome === item} onChange={() => setOutcome(item)} />{item}</label>)}
         </fieldset>

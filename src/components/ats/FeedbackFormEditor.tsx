@@ -22,7 +22,7 @@ const labelStyle = {
   marginTop: 12,
   color: "#46576c",
   fontSize: 13,
-  fontWeight: 650,
+  fontWeight: 700,
 } as const;
 
 const questionTypes: { value: FeedbackQuestion["type"]; label: string }[] = [
@@ -79,8 +79,8 @@ export function FeedbackFormEditor({
           <button type="button" onClick={leaveEditor} style={{ border: 0, padding: 0, background: "transparent", color: "#405873", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             Back to feedback forms
           </button>
-          <p style={{ margin: "18px 0 4px", color: "#718096", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>Feedback form editor</p>
-          <h1 style={{ margin: 0, color: "#172332", fontSize: 24, lineHeight: 1.25 }}>{draft.name.trim() || "New feedback form"}</h1>
+          <p style={{ margin: "18px 0 4px", color: "#718096", fontSize: 12, fontWeight: 700, textTransform: "uppercase" }}>Feedback form editor</p>
+          <h1 style={{ margin: 0, color: "#172332", fontSize: 26, lineHeight: 1.25 }}>{draft.name.trim() || "New feedback form"}</h1>
           <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 13 }}>Build a focused form for a role or interview round.</p>
         </div>
         <button type="button" className="ats-primary-button" disabled={busy || !!issue} onClick={() => void onSave(draft)}>
@@ -104,7 +104,7 @@ export function FeedbackFormEditor({
       </section>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, margin: "24px 0 10px" }}>
-        <h2 style={{ margin: 0, color: "#172332", fontSize: 18 }}>Questions</h2>
+        <h2 style={{ margin: 0, color: "#172332", fontSize: 20 }}>Questions</h2>
         <span style={{ color: "#718096", fontSize: 12 }}>{draft.questions.length} / 20</span>
       </div>
 
@@ -147,7 +147,7 @@ export function FeedbackFormEditor({
             </label>
 
             {isChoice && <fieldset style={{ margin: "18px 0 0", padding: 0, border: 0 }}>
-              <legend style={{ color: "#46576c", fontSize: 13, fontWeight: 650 }}>Answer options</legend>
+              <legend style={{ color: "#46576c", fontSize: 13, fontWeight: 700 }}>Answer options</legend>
               {question.options.map((option, optionIndex) => <div key={optionIndex} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                 <span aria-hidden="true" style={{ color: "#718096", fontSize: 12 }}>{optionIndex + 1}.</span>
                 <input style={inputStyle} maxLength={120} aria-label={`Question ${index + 1}, option ${optionIndex + 1}`} value={option} onChange={(event) => updateQuestion(index, { options: question.options.map((value, i) => i === optionIndex ? event.target.value : value) })} placeholder={`Option ${optionIndex + 1}`} />

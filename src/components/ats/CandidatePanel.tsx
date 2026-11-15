@@ -773,7 +773,7 @@ export function CandidatePanel({
                   border: 0,
                   background: "transparent",
                   cursor: "pointer",
-                  fontSize: 28,
+                  fontSize: 26,
                   lineHeight: 1,
                   padding: "2px 4px",
                   color: n <= rating ? "#d4a017" : "#d0cdc4",

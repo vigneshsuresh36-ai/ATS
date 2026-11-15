@@ -443,7 +443,7 @@ export function PipelinePanel({
           <div id="ats-pipeline-jd-file">
             <div
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: 0.4,
@@ -478,8 +478,8 @@ export function PipelinePanel({
                 border: 0,
                 background: "transparent",
                 color: "#333",
-                fontWeight: 650,
-                fontSize: 13.5,
+                fontWeight: 700,
+                fontSize: 13,
                 cursor: "pointer",
                 textAlign: "left",
                 textDecoration: "underline",

@@ -84,7 +84,7 @@
   color: rgba(244, 247, 245, 0.9);
   text-decoration: none;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 700;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   padding: 8px 14px;
@@ -122,7 +122,7 @@
 }
 
 .lt-hero-copy h1 {
-  font-family: var(--font-space), sans-serif;
+  font-family: var(--font-ui);
   font-weight: 700;
   font-size: clamp(2.4rem, 6vw, 4.1rem);
   line-height: 1.02;
@@ -149,8 +149,8 @@
   appearance: none;
   border: 0;
   cursor: pointer;
-  font-weight: 650;
-  font-size: 0.98rem;
+  font-weight: 700;
+  font-size: 16px;
   border-radius: 999px;
   padding: 0.9rem 1.35rem;
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
@@ -292,7 +292,7 @@
   border-radius: 999px;
   background: rgba(108, 92, 231, 0.08);
   color: #4e42af;
-  font-size: 0.74rem;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -308,7 +308,7 @@
   display: inline-flex;
   padding: 6px 10px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -356,7 +356,7 @@
   place-items: center;
   background: linear-gradient(135deg, #6c5ce7, #8d7eff);
   color: #fff;
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 700;
   border: 3px solid rgba(255, 255, 255, 0.8);
   margin-left: -8px;
@@ -365,7 +365,7 @@
 .lt-person:first-child { margin-left: 0; }
 .lt-person.alt { background: linear-gradient(135deg, #7e99ff, #5ec3ff); }
 .lt-person.alt-2 { background: linear-gradient(135deg, #46c8a0, #6dd0bf); }
-.lt-person.soft { background: #edf0ff; color: #494180; font-size: 0.62rem; }
+.lt-person.soft { background: #edf0ff; color: #494180; font-size: 12px; }
 
 .lt-art-panel-side {
   right: 8%;
@@ -391,7 +391,7 @@
 
 .lt-art-panel-side strong {
   display: block;
-  font-size: 0.86rem;
+  font-size: 14px;
   color: #201d35;
 }
 
@@ -429,13 +429,13 @@
 }
 
 .lt-login-panel h1 {
-  font-family: var(--font-space), sans-serif;
+  font-family: var(--font-ui);
   font-size: clamp(2.7rem, 5vw, 5rem);
   letter-spacing: -0.06em;
   margin: 0 0 0.8rem;
   line-height: 0.95;
   font-weight: 700;
-  color: #201d35;
+  color: #191919;
 }
 
 .lt-login-panel > p {
@@ -457,7 +457,7 @@
   font-size: clamp(1.35rem, 2vw, 2rem);
   box-shadow: 0 18px 44px rgba(79, 61, 171, 0.12);
   border: 1px solid rgba(108, 92, 231, 0.12);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .lt-google:hover:not(:disabled) {
@@ -472,7 +472,7 @@
   background: rgba(154, 59, 59, 0.22);
   border: 1px solid rgba(243, 180, 180, 0.35);
   color: #ffd6d6;
-  font-size: 0.92rem;
+  font-size: 14px;
 }
 
 .lt-demo {
@@ -483,16 +483,16 @@
 
 .lt-demo h2 {
   margin: 0 0 0.35rem;
-  font-size: 0.78rem;
+  font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(244, 247, 245, 0.5);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .lt-demo p {
   margin: 0 0 0.85rem;
-  font-size: 0.88rem;
+  font-size: 14px;
   color: rgba(244, 247, 245, 0.55);
 }
 
@@ -516,13 +516,13 @@
 
 .lt-demo-btn b {
   display: block;
-  font-size: 0.95rem;
+  font-size: 16px;
 }
 
 .lt-demo-btn span.role {
   display: inline-block;
   margin-top: 4px;
-  font-size: 0.7rem;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 999px;
   background: rgba(58, 110, 165, 0.35);
@@ -533,12 +533,12 @@
   display: block;
   margin-top: 4px;
   color: rgba(244, 247, 245, 0.5);
-  font-size: 0.78rem;
+  font-size: 12px;
 }
 
 .lt-foot {
   margin-top: 1.25rem;
-  font-size: 0.82rem;
+  font-size: 13px;
   color: rgba(244, 247, 245, 0.45);
 }
 

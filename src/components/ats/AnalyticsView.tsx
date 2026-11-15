@@ -60,7 +60,7 @@ export function AnalyticsView({ data, today, onReq, onCand }: AnalyticsProps) {
             const firstCandidate = stageIds[stage]?.[0];
             return <button key={stage} type="button" onClick={() => firstCandidate && onCand(firstCandidate)} style={pipelineStage} disabled={!firstCandidate}>
               <span style={{ fontSize: 12, color: "#666" }}>{prettyStatus(stage)}</span>
-              <b style={{ fontSize: 24 }}>{count}</b>
+              <b style={{ fontSize: 26 }}>{count}</b>
               <span style={{ height: 6, borderRadius: 6, background: count ? "#3a6ea5" : "#e7e2d5", width: `${Math.max(5, (count / maxStage) * 100)}%` }} />
             </button>;
           })}
@@ -117,7 +117,7 @@ export function AnalyticsView({ data, today, onReq, onCand }: AnalyticsProps) {
 }
 
 function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) { return <div style={{ margin: "0 0 10px" }}><h2 className="ats-heading-section">{title}</h2>{subtitle && <p className="ats-heading-subtitle">{subtitle}</p>}</div>; }
-function Metric({ label, value }: { label: string; value: unknown }) { return <div style={metric}><span style={subtle}>{label}</span><b style={{ fontSize: 24 }}>{String(value ?? "--")}</b></div>; }
+function Metric({ label, value }: { label: string; value: unknown }) { return <div style={metric}><span style={subtle}>{label}</span><b style={{ fontSize: 26 }}>{String(value ?? "--")}</b></div>; }
 function Empty({ text }: { text: string }) { return <div style={empty}>{text}</div>; }
 function DataTable({ headers, rows }: { headers: string[]; rows: unknown[][] }) { return <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{headers.map((header) => <th key={header} style={th}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex} style={td}>{String(cell ?? "--")}</td>)}</tr>)}</tbody></table></div>; }
 function agingValue(bucket: string, values?: Record<string, number>) { return values?.[bucket] || 0; }
@@ -129,10 +129,10 @@ const twoColumn: CSSProperties = { display: "grid", gridTemplateColumns: "repeat
 const pipelineGrid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 };
 const pipelineStage: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, border: "1px solid #ebe6da", background: "#faf9f6", borderRadius: 9, padding: 10, cursor: "pointer", textAlign: "left" };
 const bucketGrid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 7, margin: "12px 0" };
-const bucketCard: CSSProperties = { display: "flex", flexDirection: "column", gap: 5, padding: "9px 10px", background: "#faf9f6", border: "1px solid #f0ece3", borderRadius: 8, fontSize: 11 };
+const bucketCard: CSSProperties = { display: "flex", flexDirection: "column", gap: 5, padding: "9px 10px", background: "#faf9f6", border: "1px solid #f0ece3", borderRadius: 8, fontSize: 12 };
 const detailList: CSSProperties = { display: "grid", gap: 6 };
 const detailRow: CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, width: "100%", border: "1px solid #f0ece3", background: "#faf9f6", borderRadius: 8, padding: "9px 10px", textAlign: "left", cursor: "pointer", color: "#2c2c28" };
-const subtle: CSSProperties = { display: "block", color: "#777", fontSize: 11, marginTop: 3 };
+const subtle: CSSProperties = { display: "block", color: "#777", fontSize: 12, marginTop: 3 };
 const empty: CSSProperties = { border: "1px dashed #e5e0d4", borderRadius: 8, padding: 14, textAlign: "center", color: "#aaa", fontSize: 12 };
 const th: CSSProperties = { textAlign: "left", padding: "7px 8px", color: "#777", borderBottom: "1px solid #ebe6da", whiteSpace: "nowrap" };
 const td: CSSProperties = { padding: "8px", borderBottom: "1px solid #f0ece3", whiteSpace: "nowrap" };

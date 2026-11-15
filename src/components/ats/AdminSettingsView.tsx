@@ -36,7 +36,7 @@ const labelStyle = {
   marginTop: 16,
   color: "#46576c",
   fontSize: 12,
-  fontWeight: 650,
+  fontWeight: 700,
 } as const;
 
 function formatMoneyForSettings(value: number) {

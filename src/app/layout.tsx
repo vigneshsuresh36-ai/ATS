@@ -1,17 +1,15 @@
 import type { Metadata } from "next";
-import { Hanken_Grotesk, Space_Grotesk } from "next/font/google";
+import { Carlito } from "next/font/google";
 import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
 import "./premium.css";
+import "./typography.css";
 
-const hanken = Hanken_Grotesk({
+const carlito = Carlito({
   subsets: ["latin"],
-  variable: "--font-hanken",
-});
-
-const space = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space",
+  weight: ["400", "700"],
+  variable: "--font-carlito",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -24,7 +22,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${hanken.variable} ${space.variable}`}>
+      <body className={`${carlito.variable}`}>
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

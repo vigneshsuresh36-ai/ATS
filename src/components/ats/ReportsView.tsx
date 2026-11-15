@@ -183,7 +183,7 @@ function csvCell(value: unknown) {
 
 const reportCard: CSSProperties = { background: "#fff", border: "1px solid #ebe6da", borderRadius: 8, padding: 18, boxShadow: "0 1px 0 rgba(40,35,20,.03)" };
 const reportControls: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, margin: "14px 0" };
-const reportLabel: CSSProperties = { display: "grid", gap: 5, color: "#555", fontSize: 12, fontWeight: 650 };
+const reportLabel: CSSProperties = { display: "grid", gap: 5, color: "#555", fontSize: 12, fontWeight: 700 };
 const reportInput: CSSProperties = { boxSizing: "border-box", width: "100%", minHeight: 38, border: "1px solid #dcd7ca", borderRadius: 6, padding: "7px 9px", background: "#fff", color: "#2c2c28", font: "inherit" };
 const reportFields: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 8, padding: "12px 0", borderTop: "1px solid #f0ece3", borderBottom: "1px solid #f0ece3" };
 const reportField: CSSProperties = { display: "flex", alignItems: "center", gap: 7, color: "#444", fontSize: 12, minHeight: 26 };

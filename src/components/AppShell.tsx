@@ -668,7 +668,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
     <div className={`ats-page-heading${tab === "talent-pool" || tab === "automations" || (tab === "approvals" && (role === "Admin" || role === "DepartmentHead")) ? " ats-page-heading-hidden" : ""}`}>
       <div>
         <span className="ats-page-eyebrow">{orgSettings?.company || "Talent Acquisition"}</span>
-        <h1 className="ats-heading-primary" style={{ fontFamily: 'Calibri, "Segoe UI", sans-serif' }}>
+        <h1 className="ats-heading-primary" style={{ fontFamily: 'var(--font-ui)' }}>
           {role === "Employee" ? "Employee Referrals" : tab === "dashboard" ? dashboardGreeting : tabs.find((item) => item.id === tab)?.label || "Dashboard"}
         </h1>
       </div>

@@ -80,7 +80,7 @@ export function TodayView({
       <section className="ats-dashboard-attention" aria-label="Actions needing attention"><h3>Needs your attention</h3>{attention.length || upcomingJoiners.length ? <div>{attention.map((item) => <a href={`#${item.target}`} key={item.key}><span>{item.label}</span><strong>{list(item.key).length} →</strong></a>)}{upcomingJoiners.length > 0 && onViewAllJoining && <button type="button" onClick={onViewAllJoining}><span>Review upcoming joiners</span><strong>{upcomingJoiners.length} →</strong></button>}</div> : <p>No actions need your attention right now.</p>}</section>
       <div className="ats-dashboard-hero" style={hero}>
         <div>
-          <h2 className="ats-heading-section" style={{ fontFamily: 'Inter, "Segoe UI", sans-serif' }}>Today&apos;s Tasks</h2>
+          <h2 className="ats-heading-section" style={{ fontFamily: 'var(--font-ui)' }}>Today&apos;s Tasks</h2>
           <p className="ats-heading-subtitle">{totalOpen ? `${totalOpen} open items across your hiring workflow` : "You’re all caught up. New tasks will appear here."}</p>
         </div>
         <div style={attentionBadge}>{totalOpen} open items</div>
@@ -89,7 +89,7 @@ export function TodayView({
       <div className="ats-task-grid" style={taskGrid}>
         {tasks.map(([key, title, hint, background]) => (
           <a key={key} className="ats-task-card" href={`#dashboard-${key}`} style={{ ...taskCard, background }}>
-            <b style={{ fontSize: 28 }}>{list(key).length}</b>
+            <b style={{ fontSize: 26 }}>{list(key).length}</b>
             <span style={{ fontWeight: 700, fontSize: 13 }}>{title}</span>
             <small style={subtle}>{hint}</small>
           </a>
@@ -143,7 +143,7 @@ const panel: CSSProperties = { background: "#fff", border: "1px solid #ebe6da", 
 const panelHeading: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 };
 const rowButton: CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", border: "1px solid #f0ece3", background: "#faf9f6", borderRadius: 9, padding: "9px 10px", cursor: "pointer", color: "#2c2c28" };
 const ellipsis: CSSProperties = { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
-const subtle: CSSProperties = { display: "block", color: "#7a7a72", fontSize: 11, marginTop: 3 };
+const subtle: CSSProperties = { display: "block", color: "#7a7a72", fontSize: 12, marginTop: 3 };
 const ageText: CSSProperties = { color: "#8a5a00", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" };
 const emptyState: CSSProperties = { color: "#aaa", background: "#faf9f5", border: "1px dashed #e5e0d4", borderRadius: 9, padding: "16px 10px", textAlign: "center", fontSize: 12 };
 const muted: CSSProperties = { color: "#888", padding: "24px 0" };

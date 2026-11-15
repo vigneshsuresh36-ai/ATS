@@ -272,7 +272,7 @@ export function ScheduleView({
                     <div style={{ color: "#666", fontSize: 12, marginTop: 3 }}>
                       {requisition?.title || interview.reqId} · {interview.roundName || `Round ${interview.roundIndex || 1}`}
                     </div>
-                    <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>
+                    <div style={{ color: "#777", fontSize: 12, marginTop: 3 }}>
                       With {interview.interviewerEmails?.join(", ") || "Interviewer not listed"}
                       {interview.driveId && " · Recruitment Drive"}
                     </div>
@@ -700,7 +700,7 @@ const statusStack: CSSProperties = {
   flexDirection: "column",
   alignItems: "flex-end",
   gap: 4,
-  fontSize: 11,
+  fontSize: 12,
   whiteSpace: "nowrap",
 };
 

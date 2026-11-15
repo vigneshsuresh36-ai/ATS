@@ -54,7 +54,7 @@ export function DetailItem({ label, value }: { label: string; value: string }) {
     <div>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: 0.4,
@@ -63,7 +63,7 @@ export function DetailItem({ label, value }: { label: string; value: string }) {
       >
         {label}
       </div>
-      <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 2 }}>{value}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2 }}>{value}</div>
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function Stat({
         minWidth: 120,
       }}
     >
-      <div style={{ fontSize: 22, fontWeight: 800 }}>{value}</div>
+      <div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 12, color: "#666" }}>{label}</div>
     </div>
   );
@@ -121,7 +121,7 @@ export const stepBtn: CSSProperties = {
   border: "1px solid #d6e2ee",
   background: "#eef3f8",
   color: "#3a6ea5",
-  fontSize: 18,
+  fontSize: 20,
   fontWeight: 700,
   cursor: "pointer",
 };
