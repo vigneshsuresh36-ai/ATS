@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthBootScreen, useAuth } from "@/components/AuthProvider";
@@ -61,7 +60,7 @@ export default function LoginPage() {
           busy
             ? "Finish Google sign-in if a window is open…"
             : token && profile
-              ? "Taking you to TalentOS…"
+              ? "Taking you to LT Recruitment Project…"
               : "Restoring your session…"
         }
       />
@@ -73,8 +72,7 @@ export default function LoginPage() {
       <div className="lt-auth-inner">
         <nav className="lt-nav">
           <Link href="/" className="lt-brand">
-            <Image className="lt-mark" src="/ats-logo.svg" alt="" width={78} height={78} priority />
-            <div className="lt-brand-name">Talent<span className="lt-brand-os">OS</span></div>
+            <span className="lt-mark" role="img" aria-label="VIGNESH Project Z - AI ATS" />
           </Link>
         </nav>
 
@@ -120,7 +118,7 @@ export default function LoginPage() {
               <h1>Welcome back</h1>
               <p>
                 Sign in with your work Google account. Your role comes from the
-                team list — Admin, Hiring Manager, or Department Head.
+                team list — Admin, Talent acquisition, Hiring Manager, or Department Head.
               </p>
 
               {(err || error) && <div className="lt-err">{err || error}</div>}
@@ -136,8 +134,7 @@ export default function LoginPage() {
               </button>
 
               <p className="lt-foot">
-                Not on the team yet? Ask an Admin to add your Gmail in Team &amp;
-                access.
+                Don&apos;t have team access yet? Contact your Admin to get added under <strong>Team &amp; Access</strong>.
               </p>
             </div>
           </div>

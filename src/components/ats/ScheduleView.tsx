@@ -1,5 +1,8 @@
 "use client";
 
+import { RecruitmentDrive } from "./RecruitmentDrive";
+import { ActivityHistory } from "./ActivityHistory";
+
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { formatDate } from "@/lib/dateFormat";
 import { getInterviewRounds } from "@/lib/interviewPlan";
@@ -8,6 +11,8 @@ import type {
   Candidate,
   Interview,
   InterviewPlan,
+  InterviewFormat,
+  OrgSettings,
   Requisition,
 } from "@/lib/types";
 
@@ -24,6 +29,7 @@ const SCHEDULABLE = new Set([
 
 export function ScheduleView({
   reqs,
+  officeLocations = [],
   apiFetch,
   onDone,
   readOnly = false,
@@ -32,6 +38,7 @@ export function ScheduleView({
   initialRoundIndex,
 }: {
   reqs: Requisition[];
+  officeLocations?: OrgSettings["officeLocations"];
   apiFetch: (p: string, i?: RequestInit) => Promise<Response>;
   onDone: () => void;
   readOnly?: boolean;
@@ -42,10 +49,14 @@ export function ScheduleView({
   const [reqId, setReqId] = useState(initialReqId || "");
   const [cands, setCands] = useState<Candidate[]>([]);
   const [candidateId, setCandidateId] = useState(initialCandidateId || "");
+  const [format, setFormat] = useState<InterviewFormat | "">("");
+  const [officeKey, setOfficeKey] = useState("");
+  const [phoneInstructions, setPhoneInstructions] = useState("");
   const [datetime, setDatetime] = useState("");
   const [interviewers, setInterviewers] = useState("");
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [slots, setSlots] = useState<{ start: string }[]>([]);
+  const [slotNote, setSlotNote] = useState("");
   const [calendarEnabled, setCalendarEnabled] = useState(false);
   const [plan, setPlan] = useState<InterviewPlan | null>(null);
   const [roundIndex, setRoundIndex] = useState(initialRoundIndex || 1);
@@ -107,7 +118,7 @@ export function ScheduleView({
       .catch(() => setInterviews([]));
   }, [candidateId, apiFetch]);
 
-  const rounds = getInterviewRounds(plan);
+  const rounds = useMemo(() => getInterviewRounds(plan), [plan]);
 
   const bookedRounds = useMemo(() => {
     const set = new Set<number>();
@@ -118,19 +129,10 @@ export function ScheduleView({
     return set;
   }, [interviews]);
 
-  const maxBooked = useMemo(
-    () => (bookedRounds.size ? Math.max(...bookedRounds) : 0),
-    [bookedRounds]
-  );
-
   const availableRounds = useMemo(() => {
-    return rounds
-      .map((r, i) => ({
-        order: r.order || i + 1,
-        name: r.name,
-      }))
-      .filter((r) => !bookedRounds.has(r.order) && r.order <= maxBooked + 1);
-  }, [rounds, bookedRounds, maxBooked]);
+    const nextRound = rounds.find((round) => !bookedRounds.has(round.order));
+    return nextRound ? [nextRound] : [];
+  }, [rounds, bookedRounds]);
 
   useEffect(() => {
     if (!availableRounds.length) return;
@@ -161,7 +163,12 @@ export function ScheduleView({
         .sort((a, b) => a.datetime.localeCompare(b.datetime)),
     [allInterviews, calendarDate]
   );
+  const office = officeLocations.find((item) => JSON.stringify([item.name, item.city || ""]) === officeKey);
   const canSubmit =
+    !!format &&
+    (format !== "video" || calendarEnabled) &&
+    (format !== "in-person" || !!office) &&
+    (format !== "phone" || !!phoneInstructions.trim()) &&
     !!reqId &&
     !!candidateId &&
     !!datetime &&
@@ -171,7 +178,7 @@ export function ScheduleView({
 
   async function schedule() {
     if (!canSubmit) {
-      alert("Fill requisition, candidate, round, date/time, and interviewer emails.");
+      alert("Fill in the interview format, its required details, and the scheduling fields.");
       return;
     }
     setBusy(true);
@@ -184,6 +191,9 @@ export function ScheduleView({
           candidateId,
           datetime: new Date(datetime).toISOString(),
           durationMinutes,
+          format,
+          ...(format === "in-person" && office ? { officeName: office.name, officeCity: office.city || "" } : {}),
+          ...(format === "phone" ? { phoneInstructions } : {}),
           interviewers,
           roundIndex,
         }),
@@ -219,6 +229,11 @@ export function ScheduleView({
 
   return (
     <div style={{ width: "100%" }}>
+      {!readOnly && <RecruitmentDrive reqs={reqs} offices={officeLocations} interviews={allInterviews} candidateNames={new Map(allCandidates.map((item) => [item.id, item.name]))} calendarEnabled={calendarEnabled} apiFetch={apiFetch} onBooked={(interview) => {
+        setAllInterviews((current) => [...current.filter((item) => item.id !== interview.id), interview]);
+        setAllCandidates((current) => current.map((candidate) => candidate.id === interview.candidateId ? { ...candidate, stage: "Interview Scheduled" } : candidate));
+        if (candidateId === interview.candidateId) setInterviews((current) => [...current.filter((item) => item.id !== interview.id), interview]);
+      }} />}
       <section style={{ ...panel, marginBottom: 16 }}>
         <div style={calendarToolbar}>
           <div>
@@ -259,9 +274,14 @@ export function ScheduleView({
                     </div>
                     <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>
                       With {interview.interviewerEmails?.join(", ") || "Interviewer not listed"}
+                      {interview.driveId && " · Recruitment Drive"}
                     </div>
+                    {interview.format === "in-person" && <div>In person · {interview.location}</div>}
+                    {interview.format === "phone" && <div>Telephonic · {interview.phoneInstructions}</div>}
+                    {interview.format === "video" && interview.meetLink && <a href={interview.meetLink} target="_blank" rel="noreferrer">Join Google Meet</a>}
                   </div>
                   <div style={statusStack}>
+                    <ActivityHistory path={`/api/schedule?activity=${encodeURIComponent(interview.id)}`} apiFetch={apiFetch} />
                     <span style={interviewStatus(interview.status)}>{interview.status}{interview.rescheduleRequestedBy ? ` · ${interview.rescheduleRequestedBy}` : ""}</span>
                     <span style={candidateStatus}>{candidate ? prettyStatus(candidate.stage) : "Unknown"}</span>
                     {interview.feedbackPending && (
@@ -405,7 +425,30 @@ export function ScheduleView({
           </div>
 
           <div style={col}>
-            <h3 className="ats-heading-panel">When</h3>
+            <h3 className="ats-heading-panel">When and where</h3>
+            <label style={lab} htmlFor="interview-format">Interview format *</label>
+            <select id="interview-format" style={inp} value={format} onChange={(event) => setFormat(event.target.value as InterviewFormat | "")}>
+              <option value="">Choose a format</option>
+              <option value="in-person">In person</option>
+              <option value="phone">Telephonic</option>
+              <option value="video" disabled={!calendarEnabled}>Video (Google Meet){calendarEnabled ? "" : " — Calendar off"}</option>
+            </select>
+            {format && !calendarEnabled && <p>This booking is saved in the ATS. Connect Google Calendar to send invites.</p>}
+            {format === "in-person" && <>
+              <label style={lab} htmlFor="interview-office">Office location *</label>
+              <select id="interview-office" style={inp} value={officeKey} onChange={(event) => setOfficeKey(event.target.value)}>
+                <option value="">Choose an office</option>
+                {officeLocations.map((item) => {
+                  const key = JSON.stringify([item.name, item.city || ""]);
+                  return <option key={key} value={key}>{item.name}{item.city ? ` · ${item.city}` : ""}</option>;
+                })}
+              </select>
+              <p>{office ? [...new Set([office.name, office.address, office.city].filter(Boolean))].join(", ") : officeLocations.length ? "Choose a saved office location." : "Add an office or city in Settings → Company Profile → Office locations."}</p>
+            </>}
+            {format === "phone" && <>
+              <label style={lab} htmlFor="interview-phone">Call instructions *</label>
+              <input id="interview-phone" style={inp} value={phoneInstructions} maxLength={300} onChange={(event) => setPhoneInstructions(event.target.value)} placeholder="e.g. The recruiter will call you at the scheduled time" />
+            </>}
             <div
               style={{
                 display: "grid",
@@ -461,26 +504,26 @@ export function ScheduleView({
                 type="button"
                 style={cancelBtn}
                 onClick={async () => {
-                  const r = await apiFetch("/api/availability", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      date:
-                        datetime.slice(0, 10) ||
-                        new Date().toISOString().slice(0, 10),
-                    }),
-                  });
-                  const d = await r.json();
-                  setSlots(d.slots || []);
+                  try {
+                    const date = datetime.slice(0, 10) || toDateKey(new Date());
+                    const intervals = [10, 11, 14, 15, 16].map((hour) => {
+                      const start = new Date(`${date}T${String(hour).padStart(2, "0")}:00:00`);
+                      return { start: start.toISOString(), end: new Date(start.getTime() + durationMinutes * 60000).toISOString() };
+                    });
+                    const r = await apiFetch("/api/availability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ date, intervals, interviewers }) });
+                    const d = await r.json();
+                    if (!r.ok) throw new Error(d.error || "Could not check availability.");
+                    setSlots((d.slots || []).map((slot: { start: string }) => {
+                      const value = new Date(slot.start);
+                      return { start: `${toDateKey(value)}T${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}` };
+                    }));
+                    setSlotNote(d.slots?.length ? d.note || "Pick a suggested time" : "No available suggested times were found.");
+                  } catch (error) { setSlots([]); setSlotNote(error instanceof Error ? error.message : "Could not check availability."); }
                 }}
               >
                 Suggest slots
               </button>
-              {slots.length > 0 && (
-                <span style={{ fontSize: 12, color: "#888" }}>
-                  Pick a suggested time
-                </span>
-              )}
+              {slotNote && <span role="status" style={{ fontSize: 12, color: "#666" }}>{slotNote}</span>}
             </div>
             {slots.length > 0 && (
               <div

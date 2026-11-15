@@ -1,3 +1,8 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
+import { requestStatusAudit } from "@/lib/requestStatusAudit";
+import { readRecordActivity } from "@/lib/statusAudit";
+import { requireAdminDb } from "@/lib/firebaseAdmin";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireUser } from "@/lib/auth";
 import {
@@ -5,6 +10,7 @@ import {
   createInterview,
   getCandidate,
   getInterview,
+  getOrg,
   getPlan,
   getRequisition,
   listInterviews,
@@ -15,6 +21,9 @@ import {
   updateInterview,
 } from "@/lib/db";
 import { canRecruit } from "@/lib/roles";
+import { driveConflict } from "@/lib/recruitmentDrive";
+import { getInterviewBusyPeriods } from "@/lib/googleCalendar";
+import { isFreeInterval } from "@/lib/calendarAvailability";
 import { getInterviewRounds } from "@/lib/interviewPlan";
 import {
   cancelInterviewCalendarEvent,
@@ -33,7 +42,9 @@ export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
     const sp = new URL(req.url).searchParams;
-    let interviews = await listInterviews({
+    const activityId = sp.get("activity");
+    const activityInterview = activityId && !activityId.includes("/") ? await getInterview(activityId) : null;
+    let interviews = activityId ? (activityInterview ? [activityInterview] : []) : await listInterviews({
         candidateId: sp.get("candidateId") || undefined,
         reqId: sp.get("reqId") || undefined,
     });
@@ -54,9 +65,13 @@ export async function GET(req: NextRequest) {
             : undefined
       );
       const visibleIds = new Set(visibleReqs
-        .filter((requisition) => user.role !== "Recruiter" || requisition.recruiterEmail === user.email)
+        .filter((requisition) => canViewScopedRequisition(user, requisition) && (user.role !== "Recruiter" || isAssignedRecruiter(requisition, user.email)))
         .map((requisition) => requisition.id));
       interviews = interviews.filter((interview) => visibleIds.has(interview.reqId));
+    }
+    if (activityId) {
+      if (!interviews.some((interview) => interview.id === activityId)) throw new ApiError(404, "Interview not found.");
+      return json({ activity: await readRecordActivity(requireAdminDb(), "interview", activityId) });
     }
     const feedback = await listAllFeedback();
     const feedbackByInterview = new Set(
@@ -94,6 +109,15 @@ export async function POST(req: NextRequest) {
     const candidateId = String(body.candidateId || "");
     const datetime = String(body.datetime || "");
     const durationMinutes = Number(body.durationMinutes) || 60;
+    const driveId = body.driveId;
+    const breakMinutes = Number(body.breakMinutes ?? 0);
+    const room = typeof body.room === "string" ? body.room.trim() : "";
+    if (driveId !== undefined && (typeof driveId !== "string" || !/^[a-f0-9-]{36}$/i.test(driveId)
+      || !Number.isInteger(Number(body.durationMinutes)) || durationMinutes < 5 || durationMinutes > 240
+      || !Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 120 || room.length > 100
+      || !Number.isInteger(Number(body.roundIndex)) || Number(body.roundIndex) < 1 || !["in-person", "phone", "video"].includes(body.format))) {
+      throw new ApiError(400, "Enter a valid drive slot.");
+    }
     if (!reqId || !candidateId || !datetime) {
       throw new ApiError(400, "reqId, candidateId, and date/time are required.");
     }
@@ -109,7 +133,7 @@ export async function POST(req: NextRequest) {
     ) {
       throw new ApiError(403, "Requisition must be approved.");
     }
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
     if (user.role === "Admin" && r.recruiterEmail) {
@@ -119,7 +143,7 @@ export async function POST(req: NextRequest) {
       if (!teamEmails.has(r.recruiterEmail)) throw new ApiError(403, "This requisition is outside your managed team.");
     }
     const c = await getCandidate(candidateId);
-    if (!c || c.reqId !== reqId) throw new ApiError(400, "Invalid candidate.");
+    if (!c || c.archived || c.reqId !== reqId) throw new ApiError(400, "Invalid candidate.");
 
     if (c.stage === "Candidate Backed Out") {
       throw new ApiError(403, "Candidate has backed out and cannot be scheduled.");
@@ -141,13 +165,17 @@ export async function POST(req: NextRequest) {
       Number(body.roundIndex) || 1
     );
     const round =
-      rounds.find((x) => x.order === roundIndex) || rounds[roundIndex - 1];
+      rounds.find((x) => x.order === roundIndex);
     if (!round) {
       throw new ApiError(400, `Round ${roundIndex} is not configured.`);
     }
     const roundName = round.name;
+    const feedbackForm = round.feedbackFormId ? (await getOrg()).feedbackFormTemplates?.find((form) => form.id === round.feedbackFormId) : undefined;
+    if (round.feedbackFormId && !feedbackForm) throw new ApiError(400, "The selected feedback form is no longer available. Update the interview round before scheduling.");
 
-    const existing = await listInterviews({ candidateId });
+    const existing = await listInterviews({ candidateId, reqId });
+    const confirmed = driveId && existing.find((item) => item.driveId === driveId && item.roundIndex === roundIndex && item.status !== "Cancelled");
+    if (confirmed) return json({ interview: confirmed, inviteSent: !!confirmed.calendarEventId });
     const activeForRound = existing.filter(
       (iv) =>
         iv.status !== "Cancelled" &&
@@ -159,13 +187,12 @@ export async function POST(req: NextRequest) {
         `Round ${roundIndex} is already scheduled for this candidate.`
       );
     }
-    const maxBooked = existing
-      .filter((iv) => iv.status !== "Cancelled")
-      .reduce((m, iv) => Math.max(m, iv.roundIndex || 1), 0);
-    if (roundIndex > maxBooked + 1) {
+    const bookedRounds = new Set(existing.filter((iv) => iv.status !== "Cancelled").map((iv) => iv.roundIndex || 1));
+    const nextRound = rounds.find((configuredRound) => !bookedRounds.has(configuredRound.order));
+    if (nextRound && roundIndex > nextRound.order) {
       throw new ApiError(
         400,
-        `Schedule Round ${maxBooked + 1} before Round ${roundIndex}.`
+        `Schedule Round ${nextRound.order} before Round ${roundIndex}.`
       );
     }
 
@@ -174,6 +201,7 @@ export async function POST(req: NextRequest) {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
+    if (driveId && (interviewers.length > 20 || interviewers.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))) throw new ApiError(400, "Enter valid panelist emails.");
     if (interviewers.length === 0) {
       throw new ApiError(
         400,
@@ -181,6 +209,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const format = body.format ?? (isCalendarEnabled() ? "video" : undefined);
+    if (format !== undefined && format !== "video" && format !== "in-person" && format !== "phone") {
+      throw new ApiError(400, "Choose a valid interview format.");
+    }
+    if (format === "video" && !isCalendarEnabled()) throw new ApiError(400, "Connect Google Calendar before scheduling a video interview.");
+    let location: string | undefined;
+    let phoneInstructions: string | undefined;
+    if (format === "in-person") {
+      const office = (await getOrg()).officeLocations?.find((item) => item.name === body.officeName && (item.city || "") === body.officeCity);
+      if (!office) throw new ApiError(400, "Choose a saved office location from Company Profile.");
+      location = [...new Set([office.name, office.address, office.city].filter(Boolean))].join(", ");
+    }
+    if (format === "phone") {
+      phoneInstructions = typeof body.phoneInstructions === "string" ? body.phoneInstructions.trim() : "";
+      if (!phoneInstructions || phoneInstructions.length > 300) throw new ApiError(400, "Enter phone call instructions up to 300 characters.");
+    }
+    const officeLocation = location;
+    if (driveId) {
+      if (Date.parse(datetime) <= Date.now()) throw new ApiError(400, "Drive slots must start in the future.");
+      if (format === "in-person" && !room) throw new ApiError(400, "Enter a room for the in-person panel.");
+      const slot = { candidateId, datetime, durationMinutes, panel: { interviewers, room: format === "in-person" ? room : "" } };
+      if (driveConflict(slot, await listInterviews(), breakMinutes, officeLocation)) throw new ApiError(409, "Candidate, room, or panelist is already booked during this slot or break.");
+      if (isCalendarEnabled()) {
+        if (!c.email?.trim()) throw new ApiError(400, "Add a candidate email before sending a drive invite.");
+        const end = new Date(Date.parse(datetime) + (durationMinutes + breakMinutes) * 60000).toISOString();
+        const busy = await getInterviewBusyPeriods(interviewers, datetime, end);
+        if (!isFreeInterval({ start: datetime, end }, busy)) throw new ApiError(409, "A panelist is busy in Google Calendar during this slot or break.");
+      }
+      if (location && room) location = `${location} · Room: ${room}`;
+    }
     const stage = String(body.stage || roundName || "Interview");
     const attendees = [
       ...interviewers,
@@ -191,6 +249,9 @@ export async function POST(req: NextRequest) {
       ? `${appUrl}/?candidateId=${encodeURIComponent(candidateId)}`
       : "Open the ATS candidate record to complete the feedback form.";
 
+    const audit = await requestStatusAudit(user, driveId ? "Interview confirmed in a recruitment drive." : "Interview booked through the scheduling workflow.", driveId ? "Manual" : "System");
+    if (driveId) audit.correlationId = driveId;
+
     let meetLink: string | undefined;
     let calendarEventId: string | undefined;
 
@@ -198,7 +259,10 @@ export async function POST(req: NextRequest) {
       try {
         const event = await createInterviewCalendarEvent({
           summary: `${roundName}: ${c.name} — ${r.title}`,
+          video: format === "video",
+          location,
           description: [
+            ...(format === "in-person" ? ["Format: In person"] : format === "phone" ? ["Format: Phone", `Call instructions: ${phoneInstructions}`] : ["Format: Google Meet"]),
             `ATS interview`,
             `Round: ${roundIndex}. ${roundName}`,
             `Candidate: ${c.name}${c.email ? ` (${c.email})` : ""}`,
@@ -228,12 +292,21 @@ export async function POST(req: NextRequest) {
       stage,
       roundIndex,
       roundName,
+      ...(feedbackForm ? { feedbackForm } : {}),
       interviewerEmails: interviewers,
+      ...(format ? { format } : {}),
+      ...(location ? { location } : {}),
+      ...(phoneInstructions ? { phoneInstructions } : {}),
       datetime,
+      durationMinutes,
+      ...(driveId ? { driveId, breakMinutes, ...(officeLocation ? { officeLocation, room } : {}) } : {}),
       meetLink,
       calendarEventId,
       status: "Scheduled",
       createdBy: user.email,
+    }, audit).catch(async (error) => {
+      if (calendarEventId) await cancelInterviewCalendarEvent(calendarEventId).catch((cleanupError) => console.error("Could not cancel failed interview booking", cleanupError));
+      throw error;
     });
 
     // Always move into the interview cycle when a round is booked
@@ -295,7 +368,7 @@ export async function PATCH(req: NextRequest) {
     if (!requisition) {
       throw new ApiError(404, "Requisition not found.");
     }
-    if (user.role === "Recruiter" && requisition.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) {
       throw new ApiError(403, "This interview is not assigned to you.");
     }
     if (user.role === "Admin" && requisition.recruiterEmail) {
@@ -339,14 +412,16 @@ export async function PATCH(req: NextRequest) {
       throw new ApiError(400, "Enter a valid interview date and time.");
     }
 
+    const audit = status !== undefined && status !== existing.status ? await requestStatusAudit(user, body.reason) : undefined;
     if (isCalendarEnabled() && existing.calendarEventId) {
       try {
         if (status === "Cancelled") {
           await cancelInterviewCalendarEvent(existing.calendarEventId);
         } else if (datetime || interviewerEmails) {
+          const candidate = interviewerEmails ? await getCandidate(existing.candidateId) : null;
           await updateInterviewCalendarEvent(existing.calendarEventId, {
             startIso: datetime,
-            attendeeEmails: interviewerEmails,
+            attendeeEmails: interviewerEmails ? [...interviewerEmails, ...(candidate?.email ? [candidate.email] : [])] : undefined,
           });
         }
       } catch (e) {
@@ -360,7 +435,7 @@ export async function PATCH(req: NextRequest) {
       rescheduleRequestedBy: status === "Reschedule Requested" ? rescheduleRequestedBy : existing.rescheduleRequestedBy,
       datetime,
       interviewerEmails,
-    });
+    }, audit, existing.status);
     await addAudit({
       action: "interview.update",
       actorEmail: user.email,

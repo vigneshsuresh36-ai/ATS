@@ -1,16 +1,30 @@
+import { indianCityLabel } from "@/lib/indianCities";
+import { canReopenApplication } from "@/lib/candidateReopening";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
+import { normalizeQuestion, validFeedbackAnswer } from "@/lib/feedbackForms";
+import { systemStatusAudit } from "@/lib/statusAudit";
+import { referralEmail } from "@/lib/referrerIdentity";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import {
   addAudit,
+  createReferralPayout,
+  createJoiningReferralPayout,
+  createPlacementFeeForJoinedCandidate,
   createFeedback,
   getCandidate,
   getInterview,
+  getOrg,
   getPlan,
   getRequisition,
+  listAllFeedback,
   listCandidates,
   listFeedback,
   listInterviews,
+  listRequisitions,
   listStageEvents,
+  listUsers,
+  reopenCandidateApplication,
   updateCandidate,
   updateInterview,
   updateRequisition,
@@ -54,13 +68,55 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     await requireManagedRequisitionAccess(user, requisition);
     if (user.role === "HiringManager" && requisition.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
     if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === requisition.department.toLowerCase())) throw new ApiError(403, "Not your department.");
-    if (user.role === "Recruiter" && requisition.recruiterEmail !== user.email) throw new ApiError(403, "This requisition is not assigned to you.");
-    const [events, feedback, interviews] = await Promise.all([
+    if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
+    const [events, feedback, interviews, allInterviews, allFeedback, allRequisitions] = await Promise.all([
       listStageEvents(id),
       listFeedback(id),
+      listInterviews({ candidateId: id, reqId: c.reqId }),
       listInterviews({ candidateId: id }),
+      listAllFeedback(),
+      listRequisitions(),
     ]);
-    return json({ candidate: c, requisition: await getRequisition(c.reqId), events, feedback, interviews });
+    const reqTitles = new Map(allRequisitions.map((item) => [item.id, item.title]));
+    const historicalInterviews = allInterviews.filter((item) => item.reqId !== c.reqId);
+    const historicalIds = new Set(historicalInterviews.map((item) => item.id));
+    const historyFeedback = allFeedback.filter((item) => item.candidateId === id && item.reqId !== c.reqId);
+    const interviewHistory: {
+      reqId: string;
+      reqTitle: string;
+      roundName: string;
+      datetime: string;
+      status: string;
+      interviewers: string[];
+      feedback: typeof allFeedback;
+    }[] = historicalInterviews.map((interview) => ({
+      reqId: interview.reqId,
+      reqTitle: reqTitles.get(interview.reqId) || interview.reqId,
+      roundName: interview.roundName || interview.stage || `Round ${interview.roundIndex || 1}`,
+      datetime: interview.datetime,
+      status: interview.status,
+      interviewers: interview.interviewerEmails || [],
+      feedback: historyFeedback.filter((item) => item.interviewId === interview.id),
+    }));
+    interviewHistory.push(...historyFeedback
+      .filter((item) => !item.interviewId || !historicalIds.has(item.interviewId))
+      .map((item) => ({
+        reqId: item.reqId,
+        reqTitle: reqTitles.get(item.reqId) || item.reqId,
+        roundName: item.stage || "Interview feedback",
+        datetime: item.createdAt,
+        status: "Feedback recorded",
+        interviewers: [item.interviewer],
+        feedback: [item],
+      })));
+    return json({
+      candidate: c,
+      requisition,
+      events,
+      feedback: feedback.filter((item) => item.reqId === c.reqId),
+      interviews,
+      interviewHistory,
+    });
   } catch (e) {
     return errResponse(e);
   }
@@ -77,7 +133,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     await requireManagedRequisitionAccess(user, r);
     if (user.role === "HiringManager" && r.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
     if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === r.department.toLowerCase())) throw new ApiError(403, "Not your department.");
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) throw new ApiError(403, "This requisition is not assigned to you.");
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
     if (
       r.status !== "Approved" &&
       r.status !== "Position Reopened" &&
@@ -95,6 +151,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     const hmOwner = isHmOwner(user.role, r.raisedByEmail, user.email);
     const canHmDecide = user.role === "Admin" || hmOwner;
 
+    if (body.action === "reopen") {
+      if (!canRecruit(user.role)) throw new ApiError(403, "Only recruiters and admins can reopen applications.");
+      if (c.archived || !canReopenApplication(c.stage)) throw new ApiError(400, "Only rejected or backed-out applications can be reopened.");
+      return json({ candidate: await reopenCandidateApplication(c, user.email) });
+    }
+
     if (body.action === "candidateBackOut") {
       if (!canRecruit(user.role)) {
         throw new ApiError(403, "Only an Admin or Recruiter can mark a candidate as backed out.");
@@ -106,8 +168,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ) {
         throw new ApiError(400, "This candidate is already in a terminal stage.");
       }
-      if (c.offerApprovalStatus === "Pending" || c.offerApprovalStatus === "Approved") {
-        throw new ApiError(400, "Resolve the pending offer before marking the candidate as backed out.");
+      if (c.offerApprovalStatus === "Pending") {
+        throw new ApiError(400, "Resolve the pending offer before updating the candidate's withdrawal status.");
+      }
+      if (c.offerApprovalStatus === "Approved" && c.stage !== "OfferApproved" && c.stage !== "Offered") {
+        throw new ApiError(400, "An approved offer can only be marked declined before the candidate is onboarded.");
       }
 
       const reason = String(body.reason || "").trim();
@@ -121,10 +186,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         },
         { byEmail: user.email, from: c.stage, to: "Candidate Backed Out" }
       );
-      const interviews = await listInterviews({ candidateId: id });
+      const interviews = await listInterviews({ candidateId: id, reqId: c.reqId });
       const activeInterviews = interviews.filter((interview) =>
         ["Scheduled", "Rescheduled", "Reschedule Requested"].includes(interview.status)
       );
+      const interviewAudit = systemStatusAudit("Candidate backed out; cancelled remaining interviews.");
       const calendarFailures: string[] = [];
       await Promise.all(activeInterviews.map(async (interview) => {
         if (interview.calendarEventId) {
@@ -135,7 +201,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
             console.error("Could not cancel interview calendar event", error);
           }
         }
-        await updateInterview(interview.id, { status: "Cancelled" });
+        await updateInterview(interview.id, { status: "Cancelled" }, interviewAudit, interview.status);
       }));
       await addAudit({
         action: "candidate.backed_out",
@@ -195,6 +261,49 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       }
       const to = body.stage as CandidateStage;
       if (!to) throw new ApiError(400, "stage required.");
+      if (canReopenApplication(c.stage)) throw new ApiError(400, "Use Reopen application to start a new application and keep this one in history.");
+      if (c.source === "Employee Referral" && c.stage === "New") {
+        if (!canRecruit(user.role)) {
+          throw new ApiError(403, "Only a Recruiter or Admin can review an employee referral.");
+        }
+        if (to !== "PendingHMApproval" && to !== "Rejected") {
+          throw new ApiError(400, "Choose Select for HM approval or Reject referral.");
+        }
+        const updated = await updateCandidate(
+          id,
+          { stage: to },
+          { byEmail: user.email, from: c.stage, to }
+        );
+        await addAudit({
+          action: to === "Rejected" ? "candidate.employee_referral.reject" : "candidate.employee_referral.advance",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "candidate",
+          entityId: id,
+          detail: to,
+        });
+        return json({ candidate: updated });
+      }
+      if (c.stage === "Social CV") {
+        if (!canRecruit(user.role)) throw new ApiError(403, "Only a Recruiter or Admin can review a social application.");
+        if (to !== "Social CV Reject" && to !== "PendingHMApproval") {
+          throw new ApiError(400, "Choose Social CV Reject or move the candidate to HM approval.");
+        }
+        const updated = await updateCandidate(
+          id,
+          { stage: to },
+          { byEmail: user.email, from: c.stage, to }
+        );
+        await addAudit({
+          action: to === "Social CV Reject" ? "candidate.social_cv.reject" : "candidate.social_cv.advance",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "candidate",
+          entityId: id,
+          detail: to,
+        });
+        return json({ candidate: updated });
+      }
       // HM cannot freely move pending candidates — use hmApprove/hmReject
       if (
         user.role === "HiringManager" &&
@@ -217,17 +326,14 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         );
       }
 
-      const interviews = await listInterviews({ candidateId: id });
+      const interviews = await listInterviews({ candidateId: id, reqId: c.reqId });
       const maxRound = interviews
         .filter((iv) => iv.status !== "Cancelled")
         .reduce((m, iv) => Math.max(m, iv.roundIndex || 1), 0);
       const lastAdvanced = c.lastAdvancedRound ?? 0;
       const plan = await getPlan(c.reqId);
-      const configuredRounds = getInterviewRounds(plan).length;
-      const roundsComplete =
-        configuredRounds > 0
-          ? lastAdvanced >= configuredRounds
-          : maxRound > 0 && lastAdvanced >= maxRound;
+      const finalRound = Math.max(getInterviewRounds(plan).at(-1)?.order ?? 0, maxRound);
+      const roundsComplete = finalRound > 0 && lastAdvanced >= finalRound;
 
       const workflowLocked = new Set<CandidateStage>([
         "PendingHMApproval",
@@ -238,7 +344,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         "Interview Scheduled",
         "Debrief",
         "OfferApprovalPending",
-        "OfferApproved",
       ]);
       if (
         workflowLocked.has(c.stage) ||
@@ -254,14 +359,25 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         "Selected",
         "Offered",
         "Onboarded",
-        "Rejected",
         "On Hold",
+        "OfferApproved",
       ];
       if (!allowedOutcomes.includes(to)) {
         throw new ApiError(
           400,
-          "After interviews, stage can only be Selected, Offered, Onboarded, Rejected, or On Hold."
+          "Choose a valid post-interview stage. Use the debrief decision to reject a candidate."
         );
+      }
+
+      const postApprovalStages: CandidateStage[] = ["OfferApproved", "Offered", "Onboarded"];
+      if (postApprovalStages.includes(to) && c.offerApprovalStatus !== "Approved") {
+        throw new ApiError(400, "The Department Head must approve the offer before moving the candidate to Offer Approved, Offered, or Onboarded.");
+      }
+      if (c.stage === "Offered" && to === "OfferApproved") {
+        throw new ApiError(400, "An issued offer cannot be moved back to Offer Approved.");
+      }
+      if ((c.stage === "OfferApproved" || c.stage === "Offered") && !postApprovalStages.includes(to)) {
+        throw new ApiError(400, "After offer approval, update the offer to Offered, Onboarded, or record that the candidate declined it.");
       }
 
       const updated = await updateCandidate(
@@ -269,6 +385,51 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         { stage: to },
         { byEmail: user.email, from: c.stage, to }
       );
+      if (to === "Onboarded" && (await getOrg()).vendorsSpendEnabled) {
+        const placement = await createPlacementFeeForJoinedCandidate(updated || c, r, user.email);
+        if (placement) {
+          await addAudit({
+            action: "vendor.placement_fee.estimated",
+            actorEmail: user.email,
+            actingAdminEmail: user.actingAdminEmail,
+            entityType: "placement_fee",
+            entityId: String(placement.id),
+            detail: String(placement.expectedFee),
+          });
+        }
+      }
+      const joiningReferrer = to === "Onboarded" && c.source === "Employee Referral" ? referralEmail(c, await listUsers(true)) : undefined;
+      if (joiningReferrer) {
+        const amount = Number(c.employeeReferralBonus ?? r.referralBonus ?? 0);
+        if (amount > 0) {
+          const joined = new Date();
+          const joiningDate = `${joined.getFullYear()}-${String(joined.getMonth() + 1).padStart(2, "0")}-${String(joined.getDate()).padStart(2, "0")}`;
+          const org = await getOrg();
+          const overdueDays = org.referralBonusOverdueDays || 30;
+          const dueDate = new Date(joined.getFullYear(), joined.getMonth(), joined.getDate());
+          dueDate.setDate(dueDate.getDate() + overdueDays);
+          const dueAt = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, "0")}-${String(dueDate.getDate()).padStart(2, "0")}T00:00:00.000Z`;
+          const result = await createJoiningReferralPayout({
+            reqId: c.reqId,
+            candidateId: c.id,
+            candidateName: c.name,
+            referrerEmail: joiningReferrer,
+            amount,
+            joiningDate,
+            dueAt,
+          });
+          if (result.created) {
+            await addAudit({
+              action: "employee_referral.joining_bonus.earned",
+              actorEmail: user.email,
+              actingAdminEmail: user.actingAdminEmail,
+              entityType: "referral_payout",
+              entityId: result.payout.id,
+              detail: `joining=${joiningDate}; due=${dueAt}; amount=${amount}; referrer=${c.sourceDetail}`,
+            });
+          }
+        }
+      }
       await addAudit({
         action: "candidate.stage",
         actorEmail: user.email,
@@ -300,7 +461,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (!interviewId || !interview || interview.candidateId !== id) {
         throw new ApiError(400, "Select the scheduled interview for this feedback.");
       }
+      const questions = (interview.feedbackForm?.questions || []).map(normalizeQuestion);
+      const answers = Array.isArray(body.customAnswers) ? body.customAnswers : [];
+      if (answers.length !== questions.length || answers.some((item: { question?: unknown; answer?: unknown }, index: number) => item.question !== questions[index].label || typeof item.answer !== "string" || !validFeedbackAnswer(questions[index], item.answer))) throw new ApiError(400, "The feedback form has changed. Refresh the page and try again.");
       const fb = await createFeedback({
+        customAnswers: questions.map((question, index) => ({ question: question.label, answer: answers[index].answer.trim() })),
         candidateId: id,
         reqId: c.reqId,
         interviewId,
@@ -312,7 +477,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         createdBy: user.email,
       });
       if (interviewId) {
-        await updateInterview(interviewId, { status: "Completed" });
+        await updateInterview(interviewId, { status: "Completed" }, systemStatusAudit("Interview feedback was submitted."), interview.status);
       }
       if (
         c.stage === "Interview Scheduled" ||
@@ -337,7 +502,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       }
       const decision = String(body.decision || "");
       let stage: CandidateStage = c.stage;
-      const interviews = await listInterviews({ candidateId: id });
+      const interviews = await listInterviews({ candidateId: id, reqId: c.reqId });
       const maxRound = interviews
         .filter((iv) => iv.status !== "Cancelled")
         .reduce((m, iv) => Math.max(m, iv.roundIndex || 1), 0);
@@ -349,6 +514,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         stage = "Selected";
         patch.stage = stage;
         patch.lastAdvancedRound = maxRound;
+        const interviewAudit = systemStatusAudit("Candidate advanced after debrief; closed completed rounds.");
         // Mark past rounds complete so UI doesn't keep showing "Scheduled".
         await Promise.all(
           interviews
@@ -358,7 +524,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
                 (iv.roundIndex || 1) <= maxRound &&
                 iv.status !== "Completed"
             )
-            .map((iv) => updateInterview(iv.id, { status: "Completed" }))
+            .map((iv) => updateInterview(iv.id, { status: "Completed" }, interviewAudit, iv.status))
         );
       } else if (decision === "Reject") {
         stage = "Rejected";
@@ -374,6 +540,40 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         patch,
         { byEmail: user.email, from: c.stage, to: stage }
       );
+      const interviewReferrer = decision === "Advance" && c.source === "Employee Referral" ? referralEmail(c, await listUsers(true)) : undefined;
+      if (interviewReferrer) {
+        const requisition = await getRequisition(c.reqId);
+        const feedback = await listFeedback(id);
+        const feedbackInterviewIds = new Set(feedback.map((item) => item.interviewId).filter(Boolean));
+        const completedRounds = interviews
+          .filter((interview) => interview.status === "Completed" && feedbackInterviewIds.has(interview.id))
+          .sort((a, b) => (b.roundIndex || 1) - (a.roundIndex || 1));
+        const completedRound = completedRounds[0];
+        const amount = Number(requisition?.referralInterviewBonus || 0);
+        if (completedRound && amount > 0) {
+          const roundIndex = completedRound.roundIndex || 1;
+          const result = await createReferralPayout({
+            reqId: c.reqId,
+            candidateId: id,
+            candidateName: c.name,
+            referrerEmail: interviewReferrer,
+            roundIndex,
+            roundName: completedRound.roundName || completedRound.stage || `Round ${roundIndex}`,
+            amount,
+            decision: "Advance",
+          });
+          if (result.created) {
+            await addAudit({
+              action: "employee_referral.interview_bonus.earned",
+              actorEmail: user.email,
+              actingAdminEmail: user.actingAdminEmail,
+              entityType: "referral_payout",
+              entityId: result.payout.id,
+              detail: `${result.payout.roundName}; ${amount}; decision=${decision}`,
+            });
+          }
+        }
+      }
       return json({ candidate: updated, decision });
     }
 
@@ -385,17 +585,22 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         throw new ApiError(400, "Candidate must be Selected before requesting offer approval.");
       }
       const plan = await getPlan(c.reqId);
-      const configuredRounds = getInterviewRounds(plan).length;
+      const applicableRounds = getInterviewRounds(plan);
+      const finalRound = applicableRounds.at(-1)?.order ?? 0;
       const lastAdvancedRound = c.lastAdvancedRound || 0;
-      if (configuredRounds > 0 && lastAdvancedRound < configuredRounds) {
+      if (lastAdvancedRound < finalRound) {
         throw new ApiError(
           400,
-          `Complete all ${configuredRounds} configured interview rounds before moving this candidate to offer approval.`
+          "Complete all applicable interview rounds before moving this candidate to offer approval."
         );
       }
-      const interviews = (await listInterviews({ candidateId: id })).filter(
+      const interviews = (await listInterviews({ candidateId: id, reqId: c.reqId })).filter(
         (interview) => interview.status !== "Cancelled"
       );
+      const bookedRounds = new Set(interviews.map((interview) => interview.roundIndex || 1));
+      if (applicableRounds.some((round) => !bookedRounds.has(round.order))) {
+        throw new ApiError(400, "Schedule every applicable interview round before requesting offer approval.");
+      }
       const feedback = await listFeedback(id);
       const feedbackInterviewIds = new Set(
         feedback.map((item) => item.interviewId).filter(Boolean)
@@ -466,15 +671,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         r.status === "Partially Fulfilled"
       ) {
         updatedRequisition =
-          (await updateRequisition(r.id, { status: fulfillmentStatus })) || r;
-        await addAudit({
-          action: "requisition.fulfillment.update",
-          actorEmail: user.email,
-          actingAdminEmail: user.actingAdminEmail,
-          entityType: "requisition",
-          entityId: r.id,
-          detail: `${reservedCount}/${Math.max(1, r.openings)} positions reserved for offer`,
-        });
+          (await updateRequisition(r.id, { status: fulfillmentStatus }, systemStatusAudit(`Offer request reserved ${reservedCount} of ${Math.max(1, r.openings)} openings.`), r)) || r;
       }
       await addAudit({
         action: "candidate.offer_request",
@@ -579,15 +776,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
           r.status === "Partially Fulfilled"
         ) {
           updatedRequisition =
-            (await updateRequisition(r.id, { status: fulfillmentStatus })) || r;
-          await addAudit({
-            action: "requisition.fulfillment.update",
-            actorEmail: user.email,
-            actingAdminEmail: user.actingAdminEmail,
-            entityType: "requisition",
-            entityId: r.id,
-            detail: `${filledCount}/${Math.max(1, r.openings)} positions filled`,
-          });
+            (await updateRequisition(r.id, { status: fulfillmentStatus }, systemStatusAudit(`Offer release filled ${filledCount} of ${Math.max(1, r.openings)} openings.`), r)) || r;
         }
       }
       await addAudit({
@@ -607,7 +796,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       "name",
       "email",
       "phone",
-      "location",
+
       "currentCtc",
       "currentFixedCtc",
       "currentVariableCtc",
@@ -618,6 +807,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       "sourceDetail",
     ]) {
       if (body[k] !== undefined) patch[k] = body[k];
+    }
+    if (body.location !== undefined) {
+      const location = indianCityLabel(body.location);
+      if (!location) throw new ApiError(400, "Choose an Indian city from the location suggestions.");
+      patch.location = location;
     }
     const updated = await updateCandidate(id, patch);
     return json({ candidate: updated });

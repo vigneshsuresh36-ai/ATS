@@ -1,9 +1,13 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { JobDescriptionCopy } from "./JobDescriptionEditor";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { formatSalaryRange } from "@/lib/salaryFormat";
 import { Chip, prettyStatus, statusColor } from "./ui";
+import { HiringAssistant } from "./HiringAssistant";
+import { RoleHiringBrief } from "./RoleHiringBrief";
+import { signalHoneyBadgerMood } from "@/lib/honeyBadgerMood";
 import type { Candidate, Requisition, Role } from "@/lib/types";
 
 export function ApprovalsView({
@@ -25,9 +29,21 @@ export function ApprovalsView({
 }) {
   const [reason, setReason] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [briefId, setBriefId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [approvalType, setApprovalType] = useState<"requisitions" | "offers">("requisitions");
+  const [approvalSearch, setApprovalSearch] = useState("");
+  const [approvalPage, setApprovalPage] = useState(1);
+  const pageSize = 10;
+  const searchText = approvalSearch.trim().toLowerCase();
+  const filteredRequests = list.filter((r) => [r.id, r.title, r.department, r.location, r.raisedByName, r.raisedByEmail].some((value) => String(value || "").toLowerCase().includes(searchText)));
+  const filteredOffers = offerApprovals.filter(({ candidate, requisition }) => [candidate.name, candidate.email, candidate.id, requisition?.title, requisition?.department].some((value) => String(value || "").toLowerCase().includes(searchText)));
+  const resultCount = approvalType === "offers" ? filteredOffers.length : filteredRequests.length;
+  const pageCount = Math.max(1, Math.ceil(resultCount / pageSize));
+  const currentPage = Math.min(approvalPage, pageCount);
+  const start = (currentPage - 1) * pageSize;
+  const pagination = <nav className="ats-compact-table-footer" aria-label="Approval pages"><span>{resultCount ? `Showing ${start + 1}–${Math.min(start + pageSize, resultCount)} of ${resultCount}` : "No matching approvals"}</span>{pageCount > 1 && <div><button type="button" disabled={currentPage <= 1} onClick={() => setApprovalPage(currentPage - 1)}>Previous</button><span>Page {currentPage} of {pageCount}</span><button type="button" disabled={currentPage >= pageCount} onClick={() => setApprovalPage(currentPage + 1)}>Next</button></div>}</nav>;
 
   async function downloadJd(r: Requisition) {
     const res = await apiFetch(`/api/requisitions/${r.id}/jd`);
@@ -49,7 +65,7 @@ export function ApprovalsView({
 
   async function act(id: string, action: "approve" | "reject") {
     const key = `requisition:${id}`;
-    if (action === "reject" && !(reason[key] || "").trim()) {
+    if (!(reason[key] || "").trim()) {
       setExpanded(key);
       setReasonError(key);
       return;
@@ -63,7 +79,10 @@ export function ApprovalsView({
       });
       const d = await r.json();
       if (!r.ok) alert(d.error);
-      else onDone();
+      else {
+        if (action === "reject") signalHoneyBadgerMood("sad");
+        onDone();
+      }
     } finally {
       setBusyId(null);
     }
@@ -85,7 +104,10 @@ export function ApprovalsView({
       });
       const data = await response.json();
       if (!response.ok) alert(data.error);
-      else onDone();
+      else {
+        if (action === "offerReject") signalHoneyBadgerMood("sad");
+        onDone();
+      }
     } finally {
       setBusyId(null);
     }
@@ -222,15 +244,12 @@ export function ApprovalsView({
   }
 
   return (
-    <div className="ats-approvals">
+    <div className="ats-approvals ats-approvals-compact">
       <div className="ats-approval-header">
         <div>
-          <h2 className="ats-heading-section">Approval queue</h2>
-          <p className="ats-heading-subtitle">Review requisition requests and proposed candidate offers.</p>
-        </div>
-        <div className="ats-approval-summary" aria-label="Pending approvals">
-          <div><strong>{list.length}</strong><span>Requisitions</span></div>
-          <div><strong>{offerApprovals.length}</strong><span>Offers</span></div>
+          <span className="ats-compact-eyebrow">HIRING WORKSPACE</span>
+          <h1>Approvals</h1>
+          <p className="ats-heading-subtitle">Review and act on pending requests and offers.</p>
         </div>
       </div>
 
@@ -240,20 +259,21 @@ export function ApprovalsView({
           role="tab"
           aria-selected={approvalType === "requisitions"}
           className={approvalType === "requisitions" ? "is-active" : ""}
-          onClick={() => setApprovalType("requisitions")}
+          onClick={() => { setApprovalType("requisitions"); setApprovalPage(1); setExpanded(null); setBriefId(null); }}
         >
-          Requisition approvals <span>{list.length}</span>
+          Requests <span>{list.length}</span>
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={approvalType === "offers"}
           className={approvalType === "offers" ? "is-active" : ""}
-          onClick={() => setApprovalType("offers")}
+          onClick={() => { setApprovalType("offers"); setApprovalPage(1); setExpanded(null); setBriefId(null); }}
         >
-          Offer approvals <span>{offerApprovals.length}</span>
+          Offers <span>{offerApprovals.length}</span>
         </button>
       </div>
+      <div className="ats-approval-search"><input type="search" aria-label="Search approvals" value={approvalSearch} onChange={(event) => { setApprovalSearch(event.target.value); setApprovalPage(1); }} placeholder="Search by name, position or department" /></div>
 
       {approvalType === "offers" && <section className="ats-approval-section">
           <div className="ats-approval-section-head">
@@ -266,50 +286,37 @@ export function ApprovalsView({
           {offerApprovals.length === 0 ? (
             <p className="ats-approval-empty">No offer approvals pending.</p>
           ) : <div className="ats-table-wrap">
-            <table className="ats-table ats-offer-approval-table">
-              <thead><tr><th>Candidate</th><th>Department</th><th>Role</th><th>Tentative DOJ</th><th>Fixed CTC</th><th>Variable CTC</th><th>ESOPs</th><th>Joining bonus</th><th>Relocation</th><th className="actions">Actions</th></tr></thead>
-              <tbody>
-                {offerApprovals.map(({ candidate, requisition }) => {
-                  const key = `offer:${candidate.id}`;
-                  const open = expanded === key;
-                  return (
-                    <Fragment key={candidate.id}>
-                      <tr>
-                        <td><b>{candidate.name}</b><div className="ats-sub">{candidate.email}</div></td>
-                        <td>{requisition?.department || "—"}</td>
-                        <td>{requisition?.title || candidate.reqId}</td>
-                        <td>{formatDate(candidate.tentativeDoj, "—")}</td>
-                        <td>{candidate.offeredFixedCtc || candidate.offeredSalary || "—"}</td>
-                        <td>{candidate.offeredVariableCtc || "—"} ({candidate.offeredVariablePeriod || "—"})</td>
-                        <td>{candidate.offeredEsops || "—"}</td>
-                        <td>{candidate.joiningBonus || "—"}</td>
-                        <td>{candidate.relocationAssistance === undefined ? "—" : candidate.relocationAssistance ? "Yes" : "No"}</td>
-                        <td className="actions">
-                          <div className="ats-action-row">
-                            {onOpenCandidate && <button type="button" className="ats-btn-secondary" aria-label={`Review full candidate details for ${candidate.name}`} onClick={() => onOpenCandidate(candidate.id)}>Review candidate</button>}
-                            <button type="button" className="ats-btn-approve" disabled={busyId === candidate.id} onClick={() => offerAct(candidate.id, "offerApprove")}>Approve</button>
-                            <button type="button" className="ats-btn-reject" disabled={busyId === candidate.id} onClick={() => setExpanded(open ? null : key)}>Reject</button>
-                          </div>
-                        </td>
-                      </tr>
-                      {open && <tr className="ats-expand-row"><td colSpan={10}>
-                        <div className="ats-expand-panel">
-                          <label className="ats-expand-label" htmlFor={`offer-rej-${candidate.id}`}>Rejection reason (required)</label>
-                          <input id={`offer-rej-${candidate.id}`} className="ats-expand-input" required aria-invalid={reasonError === key} aria-describedby={reasonError === key ? `offer-rej-error-${candidate.id}` : undefined} value={reason[key] || ""} onChange={(e) => {
-                            setReason((current) => ({ ...current, [key]: e.target.value }));
-                            if (e.target.value.trim()) setReasonError(null);
-                          }} placeholder="Explain why this offer is being rejected" />
-                          {reasonError === key && <p id={`offer-rej-error-${candidate.id}`} className="ats-approval-error" role="alert">Enter a rejection reason to continue.</p>}
-                          <div className="ats-action-row" style={{ marginTop: 10 }}><button type="button" className="ats-btn-reject" disabled={busyId === candidate.id} onClick={() => offerAct(candidate.id, "offerReject")}>Confirm reject</button></div>
-                        </div>
-                      </td></tr>}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-            }
+            <table className="ats-table ats-approvals-table ats-offer-review-table">
+              <thead><tr><th>Candidate</th><th>Role / Department</th><th>Compensation</th><th>Joining</th><th className="actions">Actions</th></tr></thead>
+              <tbody>{filteredOffers.slice(start, start + pageSize).map(({ candidate, requisition }) => {
+                const key = `offer:${candidate.id}`;
+                const open = expanded === key;
+                const showBrief = briefId === key;
+                return <Fragment key={candidate.id}>
+                  <tr>
+                    <td><strong>{candidate.name}</strong><div className="ats-sub">{candidate.email}</div></td>
+                    <td><strong>{requisition?.title || candidate.reqId}</strong><div className="ats-sub">{requisition?.department || "—"}</div></td>
+                    <td><div>Fixed {candidate.offeredFixedCtc || candidate.offeredSalary || "—"} · Variable {candidate.offeredVariableCtc || "—"}{candidate.offeredVariablePeriod ? ` (${candidate.offeredVariablePeriod})` : ""}</div><div className="ats-sub">ESOPs: {candidate.offeredEsops ?? "—"} · Bonus: {candidate.joiningBonus ?? "—"} · Relocation: {candidate.relocationAssistance === undefined ? "—" : candidate.relocationAssistance ? "Yes" : "No"}</div></td>
+                    <td><strong>{formatDate(candidate.tentativeDoj, "—")}</strong><div className="ats-sub">Tentative joining date</div></td>
+                    <td className="actions"><div className="ats-action-row ats-requisition-actions">
+                      <button type="button" className="ats-approval-brief-toggle" aria-expanded={showBrief} onClick={() => setBriefId(showBrief ? null : key)}>✦ AI brief</button>
+                      {onOpenCandidate && <button type="button" className="ats-btn-secondary" aria-label={`Review full candidate details for ${candidate.name}`} onClick={() => onOpenCandidate(candidate.id)}>Details</button>}
+                      <button type="button" className="ats-btn-approve" disabled={busyId === candidate.id} onClick={() => offerAct(candidate.id, "offerApprove")}><span aria-hidden="true">✓</span> Approve</button>
+                      <button type="button" className="ats-btn-reject" disabled={busyId === candidate.id} aria-expanded={open} onClick={() => setExpanded(open ? null : key)}>Reject</button>
+                    </div></td>
+                  </tr>
+                  {showBrief && <tr className="ats-approval-brief-row"><td colSpan={5}><div className="ats-offer-ai"><HiringAssistant apiFetch={apiFetch} mode="offer" candidateId={candidate.id} embedded autoGenerate /></div></td></tr>}
+                  {open && <tr className="ats-expand-row"><td colSpan={5}><div className="ats-expand-panel ats-offer-rejection">
+                    <label className="ats-expand-label" htmlFor={`offer-rej-${candidate.id}`}>Rejection reason (required)</label>
+                    <input id={`offer-rej-${candidate.id}`} className="ats-expand-input" required aria-invalid={reasonError === key} aria-describedby={reasonError === key ? `offer-rej-error-${candidate.id}` : undefined} value={reason[key] || ""} onChange={(e) => { setReason((current) => ({ ...current, [key]: e.target.value })); if (e.target.value.trim()) setReasonError(null); }} placeholder="Explain why this offer is being rejected" />
+                    {reasonError === key && <p id={`offer-rej-error-${candidate.id}`} className="ats-approval-error" role="alert">Enter a rejection reason to continue.</p>}
+                    <div className="ats-action-row" style={{ marginTop: 10 }}><button type="button" className="ats-btn-reject" disabled={busyId === candidate.id} onClick={() => offerAct(candidate.id, "offerReject")}>Confirm reject</button></div>
+                  </div></td></tr>}
+                </Fragment>;
+              })}</tbody>
+            </table>{pagination}
+          </div>}
+          {offerApprovals.length > 0 && <p className="ats-compact-help">Select AI brief to review a summary, or Details to open the candidate profile.</p>}
       </section>}
 
       {approvalType === "requisitions" && <section className="ats-approval-section">
@@ -341,7 +348,7 @@ export function ApprovalsView({
               </tr>
             </thead>
             <tbody>
-              {list.map((r) => {
+              {filteredRequests.slice(start, start + pageSize).map((r) => {
                 const key = `requisition:${r.id}`;
                 const open = expanded === key;
                 return (
@@ -397,7 +404,8 @@ export function ApprovalsView({
                         className="actions"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="ats-action-row">
+                        <div className="ats-action-row ats-requisition-actions">
+                          <button type="button" className="ats-approval-brief-toggle" aria-expanded={briefId === r.id} onClick={() => setBriefId(briefId === r.id ? null : r.id)}>✦ AI brief</button>
                           <button
                             type="button"
                             className="ats-btn-secondary"
@@ -411,7 +419,7 @@ export function ApprovalsView({
                             disabled={busyId === r.id}
                             onClick={() => act(r.id, "approve")}
                           >
-                            Approve
+                            <span aria-hidden="true">✓</span> Approve
                           </button>
                           <button
                             type="button"
@@ -424,6 +432,7 @@ export function ApprovalsView({
                         </div>
                       </td>
                     </tr>
+                    {briefId === r.id && <tr className="ats-approval-brief-row"><td colSpan={11}><RoleHiringBrief requisitionId={r.id} apiFetch={apiFetch} approval /></td></tr>}
                     {open && (
                       <tr className="ats-expand-row">
                         <td colSpan={11}>
@@ -454,6 +463,12 @@ export function ApprovalsView({
                                 </span>
                               )}
                             </div>
+                            {r.jdText && (
+                              <div className="ats-expand-notes">
+                                <div className="ats-expand-label">Job description</div>
+                                <JobDescriptionCopy text={r.jdText} marks={r.jdFormatting} />
+                              </div>
+                            )}
                             {r.notes && (
                               <div className="ats-expand-notes">
                                 <div className="ats-expand-label">Notes</div>
@@ -464,7 +479,7 @@ export function ApprovalsView({
                               className="ats-expand-label"
                               htmlFor={`rej-${r.id}`}
                             >
-                              Rejection reason (required)
+                              Decision reason (required)
                             </label>
                             <input
                               id={`rej-${r.id}`}
@@ -472,14 +487,15 @@ export function ApprovalsView({
                               required
                               aria-invalid={reasonError === key}
                               aria-describedby={reasonError === key ? `rej-error-${r.id}` : undefined}
-                              placeholder="Explain why this requisition is being rejected"
+                              placeholder="Explain the reason for your decision"
+                              maxLength={500}
                               value={reason[key] || ""}
                               onChange={(e) => {
                                 setReason((s) => ({ ...s, [key]: e.target.value }));
                                 if (e.target.value.trim()) setReasonError(null);
                               }}
                             />
-                            {reasonError === key && <p id={`rej-error-${r.id}`} className="ats-approval-error" role="alert">Enter a rejection reason to continue.</p>}
+                            {reasonError === key && <p id={`rej-error-${r.id}`} className="ats-approval-error" role="alert">Enter a decision reason to continue.</p>}
                             <div
                               className="ats-action-row"
                               style={{ marginTop: 10 }}
@@ -509,7 +525,7 @@ export function ApprovalsView({
                 );
               })}
             </tbody>
-          </table>
+          </table>{pagination}
         </div>
         )}
       </section>}

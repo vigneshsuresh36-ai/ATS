@@ -1,6 +1,11 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { errResponse, json, requireUser } from "@/lib/auth";
-import { listAllFeedback, listCandidates, listInterviews, listRequisitions, listStageEvents, listUsers } from "@/lib/db";
+import { candidateSourceLabel } from "@/lib/candidateSource";
+import { listAllFeedback, listCandidates, listInterviews, listReferralPayouts, listRequisitions, listStageEvents, listUsers } from "@/lib/db";
+import { referralEmail } from "@/lib/referrerIdentity";
+import { joiningTimeline } from "@/lib/joiningTimeline";
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,13 +22,15 @@ export async function GET(req: NextRequest) {
       const set = new Set((user.departments || []).map((d) => d.toLowerCase()));
       reqs = reqs.filter((r) => set.has(r.department.toLowerCase()));
     } else if (user.role === "Recruiter") {
-      reqs = reqs.filter((r) => r.recruiterEmail === user.email);
+      reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
     }
-    const cands = await listCandidates();
+    reqs = reqs.filter((request) => canViewScopedRequisition(user, request));
+    const cands = await listCandidates(undefined, true);
     const [interviews, feedback] = await Promise.all([
       listInterviews(),
       listAllFeedback(),
     ]);
+    reqs = reqs.filter((request) => canViewScopedRequisition(user, request));
     const reqIds = new Set(reqs.map((r) => r.id));
     const visibleInterviews = interviews.filter((interview) => reqIds.has(interview.reqId));
     const scoped = cands.filter(
@@ -49,6 +56,10 @@ export async function GET(req: NextRequest) {
     const now = Date.now();
     const activeStatuses = new Set(["Approved", "Position Reopened", "Partially Fulfilled"]);
     const activeReqs = reqs.filter((requisition) => activeStatuses.has(requisition.status));
+    const joiningTimelineAttention = activeReqs.flatMap((request) => {
+      const timeline = joiningTimeline(request, now);
+      return timeline && timeline.status !== "on-track" ? [{ id: request.id, title: request.title, ...timeline }] : [];
+    });
     const openPositions = activeReqs.reduce((total, requisition) => total + Math.max(0, requisition.openings || 0), 0);
     const openPositionsList = activeReqs.map((requisition) => {
       const linkedCandidates = scoped.filter((candidate) => candidate.reqId === requisition.id);
@@ -199,7 +210,7 @@ export async function GET(req: NextRequest) {
     ).length;
     const sourceMap = new Map<string, { source: string; candidates: number; interviews: number; selected: number; offers: number }>();
     for (const candidate of scoped) {
-      const source = candidate.sourceDetail || candidate.source || "Unknown";
+      const source = candidate.source === "Employee Referral" ? "Employee Referral" : candidate.sourceDetail || candidateSourceLabel(candidate.source) || "Unknown";
       const row = sourceMap.get(source) || { source, candidates: 0, interviews: 0, selected: 0, offers: 0 };
       row.candidates += 1;
       row.interviews += interviews.filter((interview) => interview.candidateId === candidate.id).length;
@@ -282,6 +293,109 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.ageDays - a.ageDays);
 
     const requisitionById = new Map(reqs.map((requisition) => [requisition.id, requisition]));
+    const referralPayouts = user.role === "Admin" ? await listReferralPayouts() : [];
+    const referralPayoutsByCandidate = new Map<string, typeof referralPayouts>();
+    for (const payout of referralPayouts) {
+      const candidatePayouts = referralPayoutsByCandidate.get(payout.candidateId) || [];
+      candidatePayouts.push(payout);
+      referralPayoutsByCandidate.set(payout.candidateId, candidatePayouts);
+    }
+    const reportData = user.role === "Admin" ? {
+      candidates: scoped.map((candidate) => {
+        const requisition = requisitionById.get(candidate.reqId);
+        return {
+          id: candidate.id,
+          name: candidate.name,
+          email: candidate.email,
+          phone: candidate.phone,
+          location: candidate.location,
+          stage: candidate.stage,
+          reqId: candidate.reqId,
+          requisitionTitle: requisition?.title || candidate.reqId,
+          department: requisition?.department || "",
+          recruiter: requisition?.recruiterEmail
+            ? userByEmail.get(requisition.recruiterEmail)?.name || requisition.recruiterEmail
+            : "Unassigned",
+          source: candidateSourceLabel(candidate.source) || candidate.source || "Unknown",
+          sourceDetail: candidate.sourceDetail || "",
+          experienceYears: candidate.experienceYears ?? "",
+          skills: candidate.skills?.join(", ") || "",
+          createdAt: candidate.createdAt,
+          updatedAt: candidate.updatedAt,
+        };
+      }),
+      requisitions: reqs.map((requisition) => ({
+        id: requisition.id,
+        title: requisition.title,
+        department: requisition.department,
+        requisitionType: requisition.requisitionType,
+        location: requisition.location,
+        employment: requisition.employment,
+        level: requisition.level,
+        priorityLevel: requisition.priorityLevel || "-",
+        priority: requisition.priority,
+        openings: requisition.openings,
+        status: requisition.status,
+        raisedBy: requisition.raisedByName,
+        recruiter: requisition.recruiterEmail
+          ? userByEmail.get(requisition.recruiterEmail)?.name || requisition.recruiterEmail
+          : "Unassigned",
+        createdAt: requisition.createdAt,
+        updatedAt: requisition.updatedAt,
+      })),
+      interviews: visibleInterviews.map((interview) => {
+        const candidate = scoped.find((item) => item.id === interview.candidateId);
+        const requisition = requisitionById.get(interview.reqId);
+        return {
+          id: interview.id,
+          candidateName: candidate?.name || "Unknown candidate",
+          candidateEmail: candidate?.email || "",
+          requisitionTitle: requisition?.title || interview.reqId,
+          department: requisition?.department || "",
+          round: interview.roundName || `Round ${interview.roundIndex || 1}`,
+          interviewerEmails: interview.interviewerEmails.join(", "),
+          datetime: interview.datetime,
+          status: interview.status,
+          createdAt: interview.createdAt,
+        };
+      }),
+      employeeReferrals: scoped
+        .filter((candidate) => candidate.source === "Employee Referral")
+        .map((candidate) => {
+          const requisition = requisitionById.get(candidate.reqId);
+          const candidatePayouts = referralPayoutsByCandidate.get(candidate.id) || [];
+          const joiningPayout = candidatePayouts.find((payout) => payout.kind === "Joining");
+          const interviewPayouts = candidatePayouts.filter((payout) => payout.kind !== "Joining");
+          const referrerEmail = referralEmail(candidate, users) || candidate.sourceDetail || "";
+          return {
+            candidateId: candidate.id,
+            candidateName: candidate.name,
+            candidateEmail: candidate.email,
+            referrerName: userByEmail.get(referrerEmail.toLowerCase())?.name || referrerEmail,
+            referrerEmail,
+            requisitionTitle: requisition?.title || candidate.reqId,
+            department: requisition?.department || "",
+            location: candidate.location || requisition?.location || "",
+            stage: candidate.stage,
+            referralBonus: joiningPayout?.amount ?? candidate.employeeReferralBonus ?? requisition?.referralBonus ?? 0,
+            bonusEarned: candidate.stage === "Onboarded",
+            joiningPayoutStatus: joiningPayout?.status || "Not created",
+            interviewPayoutCount: interviewPayouts.length,
+            interviewPayoutTotal: interviewPayouts.reduce((total, payout) => total + payout.amount, 0),
+            createdAt: candidate.createdAt,
+            updatedAt: candidate.updatedAt,
+          };
+        }),
+      referralPayouts: referralPayouts
+        .filter((payout) => reqIds.has(payout.reqId))
+        .map((payout) => ({
+          ...payout,
+          referrerName: userByEmail.get(payout.referrerEmail.toLowerCase())?.name || payout.referrerEmail,
+          requisitionTitle: requisitionById.get(payout.reqId)?.title || payout.reqId,
+          kind: payout.kind || "InterviewRound",
+        })),
+    } : undefined;
+
     const departmentHeadOffers = user.role === "DepartmentHead"
       ? scoped
           .filter((candidate) =>
@@ -316,8 +430,10 @@ export async function GET(req: NextRequest) {
 
     return json({
       totalCandidates: scoped.length,
+      reportData,
       openPositions,
       openPositionsList,
+      joiningTimelineAttention,
       departmentHeadPositions,
       departmentHeadOffers,
       hiringManagerRequisitions,

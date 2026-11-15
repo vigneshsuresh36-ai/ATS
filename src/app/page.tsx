@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthBootScreen, useAuth } from "@/components/AuthProvider";
@@ -51,7 +50,7 @@ export default function Home() {
         message={token && profile ? "Opening your workspace" : "Getting things ready"}
         detail={
           token && profile
-            ? "Taking you to TalentOS…"
+            ? "Taking you to LT Recruitment Project…"
             : "Restoring your session…"
         }
       />
@@ -63,8 +62,7 @@ export default function Home() {
       <div className="lt-auth-inner">
         <nav className="lt-nav">
           <Link href="/" className="lt-brand">
-            <Image className="lt-mark" src="/ats-logo.svg" alt="" width={78} height={78} priority />
-            <div className="lt-brand-name">Talent<span className="lt-brand-os">OS</span></div>
+            <span className="lt-mark" role="img" aria-label="VIGNESH Project Z - AI ATS" />
           </Link>
           <Link href="/login" className="lt-nav-cta">
             Sign in

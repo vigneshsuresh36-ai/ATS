@@ -1,3 +1,4 @@
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const requisition = await getRequisition(id);
     if (!requisition) throw new ApiError(404, "Not found.");
     await requireManagedRequisitionAccess(user, requisition);
-    if (user.role === "Recruiter" && requisition.recruiterEmail !== user.email) throw new ApiError(403, "This requisition is not assigned to you.");
+    if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
     if (user.role === "HiringManager" && requisition.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
     if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === requisition.department.toLowerCase())) throw new ApiError(403, "Not your department.");
     return json({
@@ -44,7 +45,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const r = await getRequisition(id);
     if (!r) throw new ApiError(404, "Not found.");
     await requireManagedRequisitionAccess(user, r);
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) throw new ApiError(403, "This requisition is not assigned to you.");
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
     const body = await req.json();
     const existing = (await getCalibration(id)) || {
       reqId: id,

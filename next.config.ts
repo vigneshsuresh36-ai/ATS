@@ -25,6 +25,7 @@ export default function nextConfig(phase: string): NextConfig {
       "jose",
       "jwks-rsa",
       "pdf-parse",
+      "pdfmake",
       "mammoth",
     ],
   };

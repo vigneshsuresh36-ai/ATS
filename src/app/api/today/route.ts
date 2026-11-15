@@ -1,3 +1,5 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { errResponse, json, requireUser } from "@/lib/auth";
 import {
@@ -27,9 +29,10 @@ export async function GET(req: NextRequest) {
       const set = new Set((user.departments || []).map((d) => d.toLowerCase()));
       reqs = reqs.filter((r) => set.has(r.department.toLowerCase()));
     } else if (user.role === "Recruiter") {
-      reqs = reqs.filter((r) => r.recruiterEmail === user.email);
+      reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
     }
 
+    reqs = reqs.filter((request) => canViewScopedRequisition(user, request));
     const reqIds = new Set(reqs.map((r) => r.id));
     let cands = await listCandidates();
     cands = cands.filter(
@@ -135,8 +138,7 @@ export async function GET(req: NextRequest) {
           sla,
         };
       })
-      .sort((a, b) => b.days - a.days)
-      .slice(0, 15);
+      .sort((a, b) => b.days - a.days);
 
     const pendingApprovals = reqs.filter((r) => r.status === "PendingApproval");
     const reqsNeed = reqs
@@ -146,8 +148,7 @@ export async function GET(req: NextRequest) {
           r.status === "Position Reopened" ||
           r.status === "Partially Fulfilled"
       )
-      .filter((r) => !cands.some((c) => c.reqId === r.id))
-      .slice(0, 15);
+      .filter((r) => !cands.some((c) => c.reqId === r.id));
 
     const nextRoundPending = cands
       .filter((c) => c.stage === "Selected")
@@ -156,8 +157,7 @@ export async function GET(req: NextRequest) {
       .filter((c) => c.stage === "HMApproved" || c.stage === "Selected")
       .slice(0, 15);
     const offersPending = cands
-      .filter((c) => c.offerApprovalStatus === "Pending" || c.stage === "OfferApprovalPending")
-      .slice(0, 15);
+      .filter((c) => c.offerApprovalStatus === "Pending" || c.stage === "OfferApprovalPending");
 
     return json({
       newApps,

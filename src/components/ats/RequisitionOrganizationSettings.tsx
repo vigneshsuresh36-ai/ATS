@@ -1,0 +1,38 @@
+"use client";
+import { useEffect, useState } from "react";
+import { DEPARTMENTS } from "@/lib/roles";
+import type { OrgSettings } from "@/lib/types";
+export function RequisitionOrganizationSettings({ org, apiFetch, onSaved }: { org: OrgSettings | null; apiFetch: (path: string, init?: RequestInit) => Promise<Response>; onSaved: (org: OrgSettings) => void }) {
+  const [units, setUnits] = useState<string[]>(org?.businessUnits || []); const [departmentRequired, setDepartmentRequired] = useState(org?.requisitionDepartmentRequired !== false); const [unitRequired, setUnitRequired] = useState(org?.requisitionBusinessUnitRequired === true);
+  const [links, setLinks] = useState(org?.departmentBusinessUnits || []);
+  const [mappingUnit, setMappingUnit] = useState("");
+  const [mappingDepartment, setMappingDepartment] = useState("");
+  const [subDepartments, setSubDepartments] = useState<{ department: string; name: string }[]>(org?.subDepartments || []);
+  const [subParent, setSubParent] = useState(""); const [subName, setSubName] = useState("");
+  const [unit, setUnit] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const savedUnits = JSON.stringify(org?.businessUnits || []);
+  const savedLinks = JSON.stringify(org?.departmentBusinessUnits || []);
+  const savedSubDepartments = JSON.stringify(org?.subDepartments || []);
+  const savedDepartmentRequired = org?.requisitionDepartmentRequired !== false;
+  const savedUnitRequired = org?.requisitionBusinessUnitRequired === true;
+  useEffect(() => { setUnits(JSON.parse(savedUnits)); setLinks(JSON.parse(savedLinks)); setSubDepartments(JSON.parse(savedSubDepartments)); setDepartmentRequired(savedDepartmentRequired); setUnitRequired(savedUnitRequired); }, [savedUnits, savedLinks, savedSubDepartments, savedDepartmentRequired, savedUnitRequired]);
+  async function save() { setBusy(true); setMessage(""); try { const res = await apiFetch("/api/org", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "setRequisitionOrganization", businessUnits: units, subDepartments, departmentBusinessUnits: links.filter((link) => units.includes(link.businessUnit)), departmentRequired, businessUnitRequired: unitRequired }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error || "Could not save settings."); onSaved(data.org); setMessage("Requisition settings saved."); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save settings."); } finally { setBusy(false); } }
+  return <section className="ats-org-fields">
+    <header className="ats-org-heading"><h2>Departments &amp; business units</h2><p>Manage the options and requirements used on hiring requests.</p></header>
+    <div className="ats-org-fields-grid">
+    <section><h3>Business units</h3><p>Add the business units available on hiring requests.</p><div className="ats-org-list">{units.length ? units.map((name) => <span key={name}>{name}<button type="button" aria-label={`Remove ${name}`} onClick={() => setUnits(units.filter((item) => item !== name))}>×</button></span>) : <small>No business units added yet.</small>}</div><div className="ats-org-add"><input aria-label="New business unit" value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={100} placeholder="Add business unit" /><button type="button" disabled={!unit.trim()} onClick={() => { const name = unit.trim(); if (units.some((item) => item.toLowerCase() === name.toLowerCase())) { setMessage("Business unit already exists."); return; } setUnits([...units, name]); setUnit(""); setMessage(""); }}>Add</button></div></section></div>
+    <section className="ats-org-subdepartments">
+      <h3>Departments by business unit</h3>
+      <p>Link departments to each business unit. Create and manage department names in Teams &amp; Access.</p>
+      <div className="ats-org-sub-add">
+        <select aria-label="Business unit to link" value={mappingUnit} onChange={(event) => setMappingUnit(event.target.value)}><option value="">Select business unit</option>{units.map((name) => <option key={name}>{name}</option>)}</select>
+        <select aria-label="Department to link" value={mappingDepartment} onChange={(event) => setMappingDepartment(event.target.value)}><option value="">Select department</option>{[...new Set([...DEPARTMENTS, ...(org?.customDepartments || [])])].map((name) => <option key={name}>{name}</option>)}</select>
+        <button type="button" disabled={!mappingUnit || !mappingDepartment || links.some((link) => link.businessUnit === mappingUnit && link.department === mappingDepartment)} onClick={() => setLinks([...links, { businessUnit: mappingUnit, department: mappingDepartment }])}>Link department</button>
+      </div>
+      <div className="ats-org-list">{links.filter((link) => units.includes(link.businessUnit)).map((link) => <span key={link.businessUnit + "/" + link.department}>{link.businessUnit} / {link.department}<button type="button" aria-label={"Remove " + link.department + " from " + link.businessUnit} onClick={() => setLinks(links.filter((item) => item !== link))}>×</button></span>)}</div>
+    </section>
+    <section className="ats-org-subdepartments"><h3>Sub-departments</h3><p>Finance requests use the sub-department to find the assigned Department Head.</p><div className="ats-org-sub-add"><select aria-label="Parent department" value={subParent} onChange={(event) => setSubParent(event.target.value)}><option value="">Select department</option>{[...new Set([...DEPARTMENTS, ...(org?.customDepartments || [])])].map((name) => <option key={name} value={name}>{name}</option>)}</select><input aria-label="New sub-department" maxLength={80} value={subName} onChange={(event) => setSubName(event.target.value)} placeholder="e.g. Recruitment" /><button type="button" disabled={!subParent || !subName.trim()} onClick={() => { const name = subName.trim().replace(/\s+/g, " "); if (subDepartments.some((item) => item.department.toLowerCase() === subParent.toLowerCase() && item.name.toLowerCase() === name.toLowerCase())) { setMessage("Sub-department already exists in this department."); return; } setSubDepartments([...subDepartments, { department: subParent, name }]); setSubName(""); setMessage(""); }}>Add</button></div><div className="ats-org-list">{subDepartments.length ? subDepartments.map((item) => <span key={JSON.stringify([item.department, item.name])}>{item.department} · {item.name}<button type="button" aria-label={`Remove ${item.name} from ${item.department}`} onClick={() => setSubDepartments(subDepartments.filter((other) => other.department !== item.department || other.name !== item.name))}>×</button></span>) : <small>No sub-departments added yet.</small>}</div><small>Changes are saved with requisition settings. Existing requests retain their saved values.</small></section>
+    <section className="ats-org-requirements"><h3>Required on hiring requests</h3><p>Choose what information is mandatory when creating a hiring request.</p><div className="ats-org-required"><label><span>Department required</span><input type="checkbox" checked={departmentRequired} onChange={(e) => setDepartmentRequired(e.target.checked)} /></label><label><span>Business unit required</span><input type="checkbox" checked={unitRequired} onChange={(e) => setUnitRequired(e.target.checked)} /></label></div><p>Requests without a department are sent to Admins for approval. Existing requests keep their saved values.</p></section>
+    <footer className="ats-org-footer"><button type="button" className="ats-primary-button" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save changes"}</button></footer>{message && <p role="status">{message}</p>}
+  </section>;
+}

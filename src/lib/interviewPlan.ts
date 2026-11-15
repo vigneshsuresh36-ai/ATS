@@ -12,5 +12,8 @@ export const DEFAULT_INTERVIEW_ROUNDS: InterviewPlan["rounds"] = [
 export function getInterviewRounds(
   plan: InterviewPlan | null | undefined
 ): InterviewPlan["rounds"] {
-  return plan?.rounds?.length ? plan.rounds : DEFAULT_INTERVIEW_ROUNDS;
+  return (plan?.rounds?.length ? plan.rounds : DEFAULT_INTERVIEW_ROUNDS)
+    .map((round, index) => ({ ...round, order: round.order || index + 1 }))
+    .filter((round) => round.applicable !== false)
+    .sort((left, right) => left.order - right.order);
 }

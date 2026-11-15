@@ -1,0 +1,338 @@
+<title>Salary Advance Induction</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: full-bleed 3D office stage, chapter HUD top, caption bar bottom, transport controls under it */
+:root{
+  --bg:#0b1519; --panel:#12232a; --fg:#f4efe6; --muted:#a9bcc2;
+  --gold:#f5b942; --teal:#4fd6c3; --rose:#ff7a85; --line:#25424b;
+  --font-d:'Sora',system-ui,sans-serif; --font-b:'Inter',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-b);overflow:hidden;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#wrap{position:relative;height:100%;display:flex;flex-direction:column;gap:10px;padding-block:12px}
+#stage{position:relative;flex:1;min-height:0;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#102a33}
+canvas{display:block;width:100%;height:100%}
+#hud{position:absolute;left:16px;top:14px;right:16px;display:flex;justify-content:space-between;gap:12px;pointer-events:none}
+#chap{font:600 12px var(--font-b);letter-spacing:.16em;text-transform:uppercase;color:var(--gold);text-shadow:0 1px 6px #000}
+#org{font:500 12px var(--font-b);color:var(--fg);text-align:right;text-shadow:0 1px 6px #000}
+#cap{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(760px,calc(100% - 32px));text-align:center;
+  font:600 clamp(16px,2.4vw,24px)/1.35 var(--font-d);text-wrap:balance;padding:12px 18px;border-radius:12px;
+  background:rgba(8,16,20,.78);backdrop-filter:blur(6px);pointer-events:none}
+#title{position:absolute;left:0;right:0;top:16%;text-align:center;pointer-events:none;transition:opacity .6s;padding:0 16px}
+#title h2{margin:0;font:700 clamp(28px,6vw,60px)/1.05 var(--font-d);text-shadow:0 4px 24px #000;text-wrap:balance}
+#title p{margin:10px 0 0;font:500 clamp(13px,2vw,18px) var(--font-b);color:var(--gold);letter-spacing:.14em;text-transform:uppercase;text-shadow:0 2px 10px #000}
+#start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:rgba(8,16,20,.85);text-align:center;padding:24px}
+#start h1{font:700 clamp(26px,5vw,44px)/1.1 var(--font-d);margin:0;text-wrap:balance}
+#start p{margin:0;color:var(--muted);max-width:46ch}
+button{font:600 14px var(--font-b);color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;cursor:pointer}
+button:hover{border-color:var(--teal)}
+button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+button.primary{background:var(--gold);color:#1a1300;border-color:var(--gold);font-size:16px;padding:13px 26px}
+#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#prog{flex:1;min-width:160px;height:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;position:relative;cursor:pointer}
+#fill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,var(--teal),var(--gold));border-radius:8px}
+#time{font:500 13px var(--font-b);color:var(--muted);font-variant-numeric:tabular-nums;min-width:90px;text-align:right}
+#chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:6px 10px;font-size:12px;border-radius:999px;color:var(--muted)}
+.chip.on{color:#1a1300;background:var(--teal);border-color:var(--teal)}
+#check{position:absolute;right:16px;top:52px;width:min(290px,calc(100% - 32px));background:rgba(12,26,32,.94);border:1px solid var(--line);border-radius:12px;padding:14px;display:none}
+#check.show{display:block}
+#check h3{margin:0 0 8px;font:700 15px var(--font-d)}
+#check label{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:7px 0;cursor:pointer}
+#check input{accent-color:var(--teal);margin-top:2px}
+#res{margin-top:10px;font:700 14px var(--font-d);padding:9px 11px;border-radius:8px}
+#res.ok{background:rgba(79,214,195,.16);color:var(--teal)}
+#res.no{background:rgba(255,122,133,.14);color:var(--rose)}
+@media(max-width:560px){#org{display:none}#check{top:auto;bottom:90px}}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@600;700&display=swap">
+
+<div id="wrap">
+  <div id="stage">
+    <div id="title"><h2>Salary Advance Policy</h2><p>Diptab Ventures · LetsTransport</p></div>
+    <div id="hud"><div id="chap"></div><div id="org">Diptab Ventures · LetsTransport</div></div>
+    <div id="cap"></div>
+    <div id="check">
+      <h3>Can I apply? Try it</h3>
+      <label><input type="checkbox" id="c1"> My reason is a medical or personal emergency, or repaying an education or personal loan</label>
+      <label><input type="checkbox" id="c2" checked> I have no outstanding salary advance</label>
+      <label><input type="checkbox" id="c3" checked> I am not on a PIP</label>
+      <label><input type="checkbox" id="c4" checked> I am not serving my notice period</label>
+      <div id="res" class="no"></div>
+    </div>
+    <div id="start">
+      <h1>Salary Advance Policy</h1>
+      <p>Follow Ravi through the office as he asks for a salary advance. About 2 minutes. Jump between chapters any time.</p>
+      <button class="primary" id="go">Start the induction</button>
+    </div>
+  </div>
+  <div id="bar">
+    <button id="pp" aria-label="Play or pause">Pause</button>
+    <button id="rs">Restart</button>
+    <div id="prog" role="slider" aria-label="Timeline" tabindex="0"><div id="fill"></div></div>
+    <div id="time">0:00 / 1:58</div>
+  </div>
+  <div id="chips"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const stageEl=document.getElementById('stage');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+stageEl.insertBefore(renderer.domElement,stageEl.firstChild);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x102a33);
+scene.fog=new THREE.Fog(0x102a33,34,80);
+const camera=new THREE.PerspectiveCamera(42,1,0.1,200);
+scene.add(new THREE.HemisphereLight(0xfff1dc,0x3b4a55,1.0));
+const key=new THREE.DirectionalLight(0xfff0d8,.9);key.position.set(6,12,14);scene.add(key);
+
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const smooth=t=>t*t*(3-2*t);
+const easeBack=t=>{const c=1.70158,d=c+1;return 1+d*Math.pow(t-1,3)+c*Math.pow(t-1,2)};
+function pop(o,lt,t0,full=1){const k=clamp((lt-t0)/0.7);const s=k<=0?0.0001:easeBack(k)*full;o.scale.setScalar(Math.max(s,0.0001));o.visible=k>0}
+function M(c,o={}){return new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:.65,metalness:.05},o))}
+function mesh(geo,mat,x=0,y=0,z=0){const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);return m}
+function rr(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
+function wrapText(ctx,text,x,y,maxW,lh){const words=text.split(' ');let line='';for(const w of words){const t=line+w+' ';if(ctx.measureText(t).width>maxW&&line){ctx.fillText(line,x,y);line=w+' ';y+=lh}else line=t}ctx.fillText(line,x,y);return y}
+function textPlane(text,worldW,color='#f4efe6',px=96,weight=700){
+  const lines=text.split('\n');const cv=document.createElement('canvas');const ctx=cv.getContext('2d');
+  ctx.font=weight+' '+px+'px Sora, sans-serif';
+  const w=Math.ceil(Math.max(...lines.map(l=>ctx.measureText(l).width)))+40,h=Math.ceil(lines.length*px*1.25)+30;
+  cv.width=w;cv.height=h;ctx.font=weight+' '+px+'px Sora, sans-serif';ctx.fillStyle=color;ctx.textAlign='center';ctx.textBaseline='middle';
+  lines.forEach((l,i)=>ctx.fillText(l,w/2,(i+.5)*px*1.25+15));
+  const t=new THREE.CanvasTexture(cv);t.anisotropy=4;
+  return new THREE.Mesh(new THREE.PlaneGeometry(worldW,worldW*h/w),new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false}))}
+function card(emoji,title,sub,color,W=3.6,H=2.0){
+  const cv=document.createElement('canvas');cv.width=720;cv.height=Math.round(720*H/W);const ctx=cv.getContext('2d');
+  const hex='#'+new THREE.Color(color).getHexString();
+  ctx.fillStyle='#fff8ec';rr(ctx,0,0,cv.width,cv.height,40);ctx.fill();
+  ctx.fillStyle=hex;rr(ctx,0,0,cv.width,22,0);ctx.fill();
+  ctx.font='100px sans-serif';ctx.textBaseline='top';ctx.fillText(emoji,36,48);
+  ctx.fillStyle='#16232b';ctx.font='700 48px Sora, sans-serif';const ey=wrapText(ctx,title,36,170,650,58);
+  ctx.fillStyle='#4a5b63';ctx.font='500 34px Inter, sans-serif';wrapText(ctx,sub,36,ey+68,650,42);
+  const tex=new THREE.CanvasTexture(cv);tex.anisotropy=4;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(W,H),new THREE.MeshBasicMaterial({map:tex,transparent:true}));return m}
+function bubble(text,tw=4.2){
+  const cv=document.createElement('canvas');cv.width=640;cv.height=300;const ctx=cv.getContext('2d');
+  ctx.fillStyle='#ffffff';rr(ctx,8,8,624,214,40);ctx.fill();
+  ctx.beginPath();ctx.moveTo(280,215);ctx.lineTo(320,290);ctx.lineTo(360,215);ctx.fill();
+  ctx.fillStyle='#16232b';ctx.font='700 48px Sora, sans-serif';ctx.textAlign='center';
+  const lines=text.split('\n');lines.forEach((l,i)=>ctx.fillText(l,320,(lines.length==1?135:100)+i*58+ (lines.length==1?10:10)));
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,depthTest:false}));
+  sp.userData.base=[tw,tw*300/640];sp.renderOrder=10;sp.center.set(.5,0);sp.scale.set(0,0,1);return sp}
+function showB(b,lt,t0,t1){const k=clamp((lt-t0)/.35)*(1-clamp((lt-t1)/.3));b.visible=k>.01;b.scale.set(b.userData.base[0]*k,b.userData.base[1]*k,1)}
+
+// ---------- characters ----------
+function makeChar(o){
+  const g=new THREE.Group();const skin=M(o.skin,{roughness:.55}),shirt=M(o.shirt),pants=M(o.pants||0x2b3350),hair=M(o.hair,{roughness:.8});
+  const legs=[],arms=[];
+  [-1,1].forEach(s=>{const p=new THREE.Group();p.position.set(s*.24,.95,0);p.add(mesh(new THREE.CylinderGeometry(.17,.15,.95,14),pants,0,-.48,0),mesh(new THREE.SphereGeometry(.2,14,12),M(0x221a16),0,-.97,.08));p.children[1].scale.set(1,.6,1.4);g.add(p);legs.push(p)});
+  g.add(mesh(new THREE.SphereGeometry(.5,18,14),pants,0,1.0,0));g.children[2].scale.set(1.05,.6,.8);
+  const torso=mesh(new THREE.SphereGeometry(1,24,18),shirt,0,1.62,0);torso.scale.set(.64,.82,.46);g.add(torso);
+  [-1,1].forEach(s=>{const p=new THREE.Group();p.position.set(s*.7,2.08,0);p.add(mesh(new THREE.CylinderGeometry(.12,.1,.82,12),shirt,0,-.41,0),mesh(new THREE.SphereGeometry(.14,14,12),skin,0,-.86,0));g.add(p);arms.push(p)});
+  const head=new THREE.Group();head.position.y=2.6;g.add(head);
+  const hs=mesh(new THREE.SphereGeometry(.52,28,22),skin);hs.scale.set(1,1.06,.98);head.add(hs);
+  [-1,1].forEach(s=>{const e=mesh(new THREE.SphereGeometry(.12,14,12),M(0xffffff,{roughness:.3}),s*.19,.05,.43);e.scale.set(1,1.15,.6);e.name='eye';head.add(e);
+    head.add(mesh(new THREE.SphereGeometry(.065,12,10),M(0x1b1410),s*.19,.04,.51));
+    const br=mesh(new THREE.BoxGeometry(.2,.04,.04),hair,s*.19,.23,.48);br.rotation.z=-s*.12;head.add(br);
+    head.add(mesh(new THREE.SphereGeometry(.09,10,10),skin,s*.51,-.02,0))});
+  head.add(mesh(new THREE.SphereGeometry(.07,12,10),skin,0,-.08,.51));
+  const sm=mesh(new THREE.TorusGeometry(.12,.025,8,20,Math.PI),M(0x7a2d2d),0,-.17,.48);sm.rotation.z=Math.PI;head.add(sm);
+  if(o.hairStyle!=='bald'){const cap=mesh(new THREE.SphereGeometry(.56,24,16,0,Math.PI*2,0,Math.PI*.46),hair,0,.07,-.07);head.add(cap);
+    if(o.hairStyle==='long'){const b=mesh(new THREE.SphereGeometry(1,16,14),hair,0,-.2,-.22);b.scale.set(.6,.78,.4);head.add(b)}
+    if(o.hairStyle==='bun'){head.add(mesh(new THREE.SphereGeometry(.2,12,10),hair,0,.62,-.12));const b=mesh(new THREE.SphereGeometry(1,16,14),hair,0,-.05,-.2);b.scale.set(.58,.6,.38);head.add(b)}}
+  if(o.glasses){[-1,1].forEach(s=>{const r=mesh(new THREE.TorusGeometry(.14,.018,8,18),M(0x1b1b1b),s*.19,.05,.52);head.add(r)})}
+  const sh=mesh(new THREE.CircleGeometry(.9,24),new THREE.MeshBasicMaterial({color:0,transparent:true,opacity:.3}),0,.02,0);sh.rotation.x=-Math.PI/2;g.add(sh);
+  g.userData={head,arms,legs,torso,ph:Math.random()*6,walk:false};g.scale.setScalar(1);return g}
+function idle(c,T){const u=c.userData;u.torso.scale.y=.82+Math.sin(T*2+u.ph)*.012;u.head.rotation.y=Math.sin(T*.7+u.ph)*.18;u.head.rotation.x=0;u.head.rotation.z=0;
+  u.arms[0].rotation.set(0,0,-.14+Math.sin(T*1.5+u.ph)*.03);u.arms[1].rotation.set(0,0,.14-Math.sin(T*1.5+u.ph)*.03);
+  u.legs[0].rotation.x=u.legs[1].rotation.x=0;
+  const bl=((T+u.ph)%3.6)<.12?.1:1;u.head.children.forEach(ch=>{if(ch.name==='eye')ch.scale.y=1.15*bl})}
+function walkAnim(c,T){const u=c.userData;u.legs[0].rotation.x=Math.sin(T*8)*.6;u.legs[1].rotation.x=-Math.sin(T*8)*.6;u.arms[0].rotation.x=-Math.sin(T*8)*.5;u.arms[1].rotation.x=Math.sin(T*8)*.5;c.position.y=Math.abs(Math.sin(T*8))*.08}
+const raise=c=>{c.userData.arms[1].rotation.z=2.7};
+const wave=(c,T)=>{c.userData.arms[1].rotation.z=2.6+Math.sin(T*8)*.35};
+
+// ---------- office ----------
+const SX=[0,12,24,36,48,60,74];
+const NAMES=['Employee','Reporting Manager','Business Head','People Partner','Comp & Benefits','Finance','CEO · COO'];
+const wood=M(0xb07a45),woodD=M(0x8a5a30),teal=M(0x1d6670,{roughness:.9});
+const floor=mesh(new THREE.PlaneGeometry(160,26),M(0x7a4f2e,{roughness:.7}),35,0,2);floor.rotation.x=-Math.PI/2;scene.add(floor);
+const wall=mesh(new THREE.PlaneGeometry(160,12),teal,35,6,-4.6);scene.add(wall);
+const skirt=mesh(new THREE.BoxGeometry(160,.5,.2),M(0xe9dcc4),35,.25,-4.5);scene.add(skirt);
+SX.forEach((x,i)=>{
+  const rug=mesh(new THREE.CircleGeometry(3.6,32),M([0xc46a4a,0x3f8f8a,0xd9a441,0x7a63b8,0x4a8f5e,0xc46a4a,0x3a4a7a][i],{roughness:1}),x,.015,.8);rug.rotation.x=-Math.PI/2;scene.add(rug);
+  scene.add(mesh(new THREE.BoxGeometry(3.7,.16,1.7),M(0xc89258),x,1.45,1.3));
+  scene.add(mesh(new THREE.BoxGeometry(3.6,1.4,.12),wood,x,.72,2.05));
+  [-1,1].forEach(s=>scene.add(mesh(new THREE.BoxGeometry(.12,1.4,1.7),woodD,x+s*1.74,.72,1.3)));
+  const np=textPlane(NAMES[i],2.4,'#fff4dc',70);np.position.set(x,.85,2.13);scene.add(np);
+  scene.add(mesh(new THREE.BoxGeometry(1.1,.06,.7),M(0x9aa3ad,{metalness:.6}),x,1.56,1.3));
+  const lid=mesh(new THREE.BoxGeometry(1.1,.7,.05),M(0x9aa3ad,{metalness:.6}),x,1.93,.97);lid.rotation.x=-.25;scene.add(lid);
+  const logo=mesh(new THREE.CircleGeometry(.1,16),new THREE.MeshBasicMaterial({color:0xfff2c0}),x,1.95,1.0);logo.rotation.x=-.25;scene.add(logo);
+  const lampBase=mesh(new THREE.CylinderGeometry(.18,.22,.08,14),M(0x2a2a2a),x+1.4,1.57,1.1);scene.add(lampBase);
+  scene.add(mesh(new THREE.CylinderGeometry(.03,.03,.9,8),M(0x2a2a2a),x+1.4,2.0,1.1));
+  const shade=mesh(new THREE.ConeGeometry(.35,.4,16,1,true),new THREE.MeshBasicMaterial({color:0xffc86a,side:THREE.DoubleSide}),x+1.2,2.5,1.1);shade.rotation.z=.4;scene.add(shade);
+  const pl=new THREE.PointLight(0xffb45a,.9,16);pl.position.set(x+1.4,3.0,1.6);scene.add(pl);
+  // window
+  scene.add(mesh(new THREE.BoxGeometry(3.4,2.6,.1),M(0xf2e6d0),x-.5,4.4,-4.5));
+  scene.add(mesh(new THREE.PlaneGeometry(3.1,2.3),new THREE.MeshBasicMaterial({color:i%2?0xbfe0ff:0xffe0b0}),x-.5,4.4,-4.43));
+  // decor
+  if(i%2===0){for(let r=0;r<3;r++)for(let b=0;b<7;b++)scene.add(mesh(new THREE.BoxGeometry(.28,.8,.4),M([0xd95d5d,0xe8b84a,0x4a90c4,0x6fbf73][(r+b)%4]),x+3.2+b*.32,1.2+r*1.3,-4.2));
+    scene.add(mesh(new THREE.BoxGeometry(2.6,.1,.6),woodD,x+4.2,.85,-4.2));scene.add(mesh(new THREE.BoxGeometry(2.6,.1,.6),woodD,x+4.2,2.15,-4.2));scene.add(mesh(new THREE.BoxGeometry(2.6,.1,.6),woodD,x+4.2,3.45,-4.2))}
+  else{scene.add(mesh(new THREE.CylinderGeometry(.35,.28,.7,14),M(0xc46a4a),x+3.6,.35,-2.6));
+    for(let k=0;k<5;k++){const l=mesh(new THREE.SphereGeometry(.5,12,10),M(0x3f9a55),x+3.6+(k-2)*.22,1.1+(k%2)*.4,-2.6+(k%3-1)*.2);scene.add(l)}}
+  scene.add(mesh(new THREE.BoxGeometry(1.1,.8,.06),M(0xf4efe6),x-3.3,3.6,-4.5));
+});
+// dust
+(function(){const n=400,p=new Float32Array(n*3);for(let i=0;i<n;i++){p[i*3]=Math.random()*120-20;p[i*3+1]=Math.random()*8+.5;p[i*3+2]=Math.random()*14-4}
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));
+ scene.add(new THREE.Points(g,new THREE.PointsMaterial({color:0xffe6b0,size:.06,transparent:true,opacity:.5})))})();
+
+// cast
+const ravi=makeChar({skin:0xe0a77a,hair:0x1c1410,shirt:0x3d8fd4,pants:0x2b3350,hairStyle:'short'});
+const mgr=makeChar({skin:0xc98a5e,hair:0x241a14,shirt:0x3c9a6e,hairStyle:'short',glasses:true});
+const bh=makeChar({skin:0xe3b48c,hair:0xd8d8d8,shirt:0x59607a,pants:0x1f2433,hairStyle:'short'});
+const pp=makeChar({skin:0xd9a074,hair:0x2a1810,shirt:0x8b5cc7,hairStyle:'long'});
+const cb=makeChar({skin:0xb87a52,hair:0x1c1410,shirt:0x2aa6a0,hairStyle:'bun'});
+const fin=makeChar({skin:0xdca97c,hair:0x32221a,shirt:0xe0793a,hairStyle:'short',glasses:true});
+const ceo=makeChar({skin:0xe3b48c,hair:0xbdbdbd,shirt:0x1f2a55,pants:0x14193a,hairStyle:'bald'});
+const coo=makeChar({skin:0xc98a5e,hair:0x1c1410,shirt:0x8f2f4d,pants:0x2a1a24,hairStyle:'long'});
+const stationChars=[null,mgr,bh,pp,cb,fin];
+stationChars.forEach((c,i)=>{if(c){c.position.set(SX[i],0,0);scene.add(c)}});
+ceo.position.set(SX[6]-.9,0,0);coo.position.set(SX[6]+.9,0,0);scene.add(ceo,coo);
+scene.add(ravi);
+const all=[ravi,mgr,bh,pp,cb,fin,ceo,coo];
+function raviState(idx,lt){
+  if(idx<4)return{x:0,z:0,w:false};
+  if(idx===4){const k=clamp((lt-4)/19);const e=smooth(k);const x=39.2*e;
+    const z=k<=0?0:(k<.04?-1.7*(k/.04):(k>.96?-1.7+3.1*((k-.96)/.04):-1.7));return{x,z,w:k>0&&k<1}}
+  return{x:39.2,z:1.4,w:false}}
+
+// bubbles (children of chars)
+function addB(c,text,w){const b=bubble(text,w||4.2);b.position.set(0,3.9,0);c.add(b);return b}
+
+// ---------- scenes ----------
+const scenes=[];
+function addScene(dur,chapter,caps,cam,build){scenes.push({dur,chapter,caps,cam,upd:build()})}
+const tilt=(c,lt,s=1)=>{c.rotation.y=Math.sin(lt*.8)*.05*s};
+
+// 0 Welcome
+addScene(8,'Welcome',[[0,'Meet Ravi. He works at LetsTransport.'],[4.5,'Today, life throws him a surprise.']],
+  lt=>[-8+lt*1.2,3.4,13,-8+lt*1.2+1,2.4],()=>{const b=addB(ravi,'Good morning! ☕',3.6);return lt=>{wave(ravi,lt);showB(b,lt,3,7.5);mgr.userData.arms[1].rotation.z=2.5+Math.sin(lt*7)*.3*(lt>2?1:0)}});
+
+// 1 Purpose & scope
+const cP=card('🎯','Purpose','Eligibility, approval process and repayment terms',0x2aa6a0,3.8,2.1),cS=card('👥','Scope','All employees across LetsTransport',0xf5b942,3.8,2.1);
+cP.position.set(-5.6,4.3,.6);cS.position.set(5.6,4.3,.6);scene.add(cP,cS);cP.visible=cS.visible=false;
+addScene(10,'Purpose & Scope',[[0,'This policy sets out how salary advances work.'],[5,'It applies to every employee across LetsTransport.']],
+  lt=>[1.5,3.5,13.2,0,2.6],()=>{const b=addB(ravi,'Is there help\nfor emergencies?',4.2);return lt=>{pop(cP,lt,.8);pop(cS,lt,4.8);showB(b,lt,1,5.5)}});
+
+// 2 Eligibility
+const L=[['🏥','Medical emergency','Health needs that cannot wait'],['🚨','Personal emergency','Urgent, unplanned situation'],['🎓','Loan repayment','Education or personal loan']];
+const R=[['💸','Outstanding advance','You already have one running'],['📉','On a PIP','Performance Improvement Plan'],['👋','Serving notice','You are in your notice period']];
+const elig=[];
+L.forEach((d,i)=>{const c=card(d[0],d[1],d[2],0x2aa6a0,3.7,1.7);c.position.set(-5.4,5.3-i*2.0,.6);scene.add(c);c.visible=false;elig.push([c,1.5+i*1.7])});
+R.forEach((d,i)=>{const c=card(d[0],d[1],d[2],0xe0525f,3.7,1.7);c.position.set(5.4,5.3-i*2.0,.6);scene.add(c);c.visible=false;elig.push([c,11+i*1.9])});
+addScene(22,'Eligibility',[[0,'Ravi has a medical emergency at home.'],[1.5,'A valid reason qualifies: medical, personal, or loan repayment.'],[10,'But some situations rule you out.'],[17.5,'Any one of these means you cannot apply.']],
+  lt=>[0,3.6,15,0,2.7],()=>{const b1=addB(ravi,'Medical emergency… 😟',4.6),b2=addB(ravi,'Am I eligible?',3.8);
+  return lt=>{elig.forEach(([c,t])=>pop(c,lt,t));showB(b1,lt,.4,5);showB(b2,lt,10,15);ravi.userData.head.rotation.x=.12;if(lt>10&&lt<15)ravi.userData.head.rotation.z=Math.sin(lt*3)*.1}});
+
+// 3 Limits
+const stacks=[];for(let k=0;k<3;k++){const s=new THREE.Group();s.position.set(-7.2+k*1.5,0,2.6);for(let i=0;i<8;i++)s.add(mesh(new THREE.CylinderGeometry(.55,.55,.2,28),M(0xf5b942,{metalness:.8,roughness:.3}),0,.12+i*.22,0));
+  const l=textPlane('1 month',1.3,'#fff4dc',64,600);l.position.set(0,2.2,.3);s.add(l);scene.add(s);s.visible=false;stacks.push(s)}
+const capP=card('💰','Up to 3× gross salary','Maximum advance',0xf5b942,3.8,1.8);capP.position.set(-5.2,5.2,.6);scene.add(capP);capP.visible=false;
+const rpP=card('📅','Within 6 months','Equal monthly deductions, from the next payroll cycle',0x2aa6a0,4.0,2.0);rpP.position.set(5.6,5.2,.6);scene.add(rpP);rpP.visible=false;
+const blks=[];for(let i=0;i<6;i++){const g=new THREE.Group();g.position.set(2.8+i*1.15,.7,2.7);g.add(mesh(new THREE.BoxGeometry(.95,.95,.6),M(0x3f7fcf,{roughness:.4})));const t=textPlane('M'+(i+1),.7,'#ffffff',80);t.position.z=.31;g.add(t);scene.add(g);g.visible=false;blks.push(g)}
+addScene(17,'Limits & Repayment',[[0,'He can borrow up to 3 months of gross salary.'],[7,'He must repay within 6 months, in equal monthly deductions.'],[13,'Deductions start from the payroll cycle after disbursement.']],
+  lt=>[0,3.6,15,0,2.7],()=>{const b=addB(ravi,'How much?\nHow long?',3.8);return lt=>{stacks.forEach((s,i)=>pop(s,lt,1+i*1.2));pop(capP,lt,4);pop(rpP,lt,7);blks.forEach((g,i)=>{pop(g,lt,8+i*.6);g.rotation.y=Math.sin(lt*2+i)*.1});showB(b,lt,.3,3.8)}});
+
+// 4 Request & approval
+const envl=new THREE.Group();envl.add(mesh(new THREE.BoxGeometry(.8,.55,.08),M(0xffffff,{roughness:.3})));const fl=mesh(new THREE.ConeGeometry(.45,.3,3),M(0xf3e7d0),0,.15,.06);fl.rotation.set(Math.PI/2,0,Math.PI);fl.scale.set(1,1,.2);envl.add(fl);envl.add(mesh(new THREE.SphereGeometry(.09,10,10),M(0xe0525f),0,.05,.1));scene.add(envl);envl.visible=false;
+const segs=[[3.5,7,0,12],[11,14.5,12,24],[18.5,22,24,36]];
+function envPos(lt){let x=0,y=2.2,mv=false;for(const s of segs){if(lt>=s[1]){x=s[3]}else if(lt>s[0]){const p=smooth((lt-s[0])/(s[1]-s[0]));x=s[2]+(s[3]-s[2])*p;y=2.2+Math.sin(p*Math.PI)*2;mv=true;break}else break}return{x,y,mv}}
+const gAppr=[[mgr,7.3,10.5],[bh,14.8,18],[pp,22.3,24]];
+addScene(24,'Request & Approval',[[0,'Ravi emails his request: the reason and the amount.'],[7,'First, his Reporting Manager approves.'],[14.5,'Then the Functional or Business Head, or Regional or Department Head.'],[21.5,'Last, the People Partner. Processing starts only when all approvals are in.']],
+  lt=>{const e=envPos(lt);return [e.x+2.2,3.7,11.8,e.x,2.7]},()=>{const bs=gAppr.map(a=>addB(a[0],'Approved ✔',3.4));const br=addB(ravi,'Reason + amount\nsent by email ✉️',4.6);
+  return lt=>{const e=envPos(lt);envl.visible=lt>.5;envl.position.set(e.x,e.y+(e.mv?0:Math.sin(lt*3)*.06),1.3);envl.rotation.z=e.mv?Math.sin(lt*6)*.2:0;
+    gAppr.forEach((a,i)=>{showB(bs[i],lt,a[1],a[2]);if(lt>a[1]&&lt<a[2]+1)raise(a[0])});showB(br,lt,.5,3.6);if(lt<3.6)ravi.userData.arms[1].rotation.x=-.4+Math.sin(lt*10)*.1}});
+
+// 5 Documentation
+const dA=card('📝','Salary Advance Agreement','Ravi signs it before disbursement',0x2aa6a0,3.9,2.0),dC=card('🧾','Post-dated cheque','Equal to the approved amount, in favour of the company',0xf5b942,4.1,2.2);
+dA.position.set(31.6,4.8,.6);dC.position.set(43.6,4.8,.6);scene.add(dA,dC);dA.visible=dC.visible=false;
+addScene(12,'Documentation',[[0,'Before any money moves, two documents are needed.'],[6,'The People Partner checks that every approval and document is complete.']],
+  lt=>[37.8,3.6,13.5,37.8,2.7],()=>{const b1=addB(pp,'Please sign\nhere 🖊️',3.8),b2=addB(pp,'All complete ✔',3.8);
+  return lt=>{pop(dA,lt,.8);pop(dC,lt,3);showB(b1,lt,1,5.5);showB(b2,lt,7,11.5);if(lt>1&&lt<5)ravi.userData.arms[1].rotation.x=-.9+Math.sin(lt*9)*.1;if(lt>7)raise(pp)}});
+
+// 6 Disbursement
+const env2=envl.clone();scene.add(env2);env2.visible=false;
+const coins=[];for(let i=0;i<70;i++){const c=mesh(new THREE.CylinderGeometry(.22,.22,.06,16),M(0xf5b942,{metalness:.8,roughness:.3}));c.rotation.x=Math.PI/2*Math.random();c.visible=false;scene.add(c);coins.push([c,Math.random()*5-2.5,Math.random()*3,Math.random()*3+3,Math.random()*2.6])}
+const banner=textPlane('💰 ADVANCE DISBURSED',8,'#ffe9a8',90);banner.position.set(39.2,6.2,1);scene.add(banner);banner.visible=false;
+function e2pos(lt){const segs2=[[4.2,6.4,36,48],[7.4,9.4,48,60]];let x=36,y=2.2;for(const s of segs2){if(lt>=s[1])x=s[3];else if(lt>s[0]){const p=smooth((lt-s[0])/(s[1]-s[0]));x=s[2]+(s[3]-s[2])*p;y=2.2+Math.sin(p*Math.PI)*2;break}else break}return{x,y}}
+addScene(13,'Disbursement',[[0,'The People Partner shares the amount and monthly deduction.'],[3.5,'Ravi confirms. The details go to Compensation & Benefits.'],[7.5,'Finance gives the final approval and disburses the advance.'],[10,'Ravi has the support he needed.']],
+  lt=>{if(lt<4)return[37.8,3.7,12.5,37.8,2.7];if(lt<9.4){const e=e2pos(lt);return[e.x+2,3.7,12,e.x,2.7]}return[39.2,3.4,12.5,39.2,2.9]},()=>{
+  const b1=addB(pp,'₹ amount + monthly\ndeduction shared',4.8),b2=addB(ravi,'Confirmed ✔',3.4),b3=addB(cb,'Details received',3.8),b4=addB(fin,'Final approval ✔',3.8),b5=addB(ravi,'Thank you! 🙏',3.6);
+  return lt=>{showB(b1,lt,.4,3.2);showB(b2,lt,3,4.6);showB(b3,lt,6.2,8);showB(b4,lt,9,10.2);showB(b5,lt,11,13);
+    const e=e2pos(lt);env2.visible=lt>4.1;env2.position.set(e.x,e.y,1.3);if(lt>6.4)raise(cb);if(lt>9.4)raise(fin);
+    const k=lt-10;coins.forEach(([c,dx,off,sp,ph])=>{c.visible=k>0;c.position.set(39.2+dx,Math.max(.15+ph*.05,9-k*sp-off),1.5+Math.abs(dx)*.3);c.rotation.z+=.1});
+    banner.visible=lt>10.2;banner.scale.setScalar(Math.max(.01,easeBack(clamp((lt-10.2)/.7))));
+    if(lt>10){ravi.position.y=Math.abs(Math.sin((lt-10)*5))*.7;ravi.userData.arms[0].rotation.z=-2.7;ravi.userData.arms[1].rotation.z=2.7}}});
+
+// 7 Exceptions
+const xBH=card('🧑‍💼','Business Head','Recommends the exception',0x59607a,3.6,1.8);xBH.position.set(SX[6]-5,4.7,.6);
+const xCE=card('🤝','CEO + COO','Joint approval for any deviation',0xf5b942,3.8,1.8);xCE.position.set(SX[6]+5,4.7,.6);scene.add(xBH,xCE);xBH.visible=xCE.visible=false;
+addScene(11,'Exceptions',[[0,'Any deviation from this policy needs special approval.'],[3.5,'The CEO and COO approve it jointly, on the business head’s recommendation.'],[7,'Questions? Your People Partner is the first call.']],
+  lt=>lt<6.3?[SX[6],3.6,13.5,SX[6],2.7]:[38.2,3.4,12.5,38.2,2.8],()=>{const b=addB(ceo,'Approved\njointly ✔',3.6),b2=addB(pp,'Questions? Ask me!',4.4),b3=addB(ravi,'Thank you! 🙂',3.6);
+  return lt=>{pop(xBH,lt,.6);pop(xCE,lt,2.2);showB(b,lt,4,6);if(lt>3.8&&lt<6.3){ceo.userData.arms[1].rotation.z=1.0;coo.userData.arms[0].rotation.z=-1.0;ceo.userData.arms[1].rotation.x=-1.2;coo.userData.arms[0].rotation.x=-1.2}
+    showB(b2,lt,7,10.8);showB(b3,lt,8.4,10.8);if(lt>7)wave(pp,lt)}});
+
+// ---------- player ----------
+const cum=[];let tot=0;scenes.forEach(s=>{cum.push(tot);tot+=s.dur});const TOTAL=tot;
+const el=id=>document.getElementById(id);
+let T=0,playing=false,started=false,lastIdx=-1,lastCap=-1;const mouse={x:0,y:0};
+stageEl.addEventListener('pointermove',e=>{const r=stageEl.getBoundingClientRect();mouse.x=((e.clientX-r.left)/r.width-.5)*2;mouse.y=((e.clientY-r.top)/r.height-.5)*2});
+const chips=el('chips');
+scenes.forEach((s,i)=>{const b=document.createElement('button');b.className='chip';b.textContent=s.chapter;b.onclick=()=>{T=cum[i]+(i===4?0:0);lastCap=-1;if(!started)begin();playing=true;el('pp').textContent='Pause'};chips.appendChild(b)});
+const fmt=s=>{s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+function begin(){started=true;el('start').hidden=true}
+el('go').onclick=()=>{begin();playing=true;T=0};
+el('pp').onclick=()=>{if(T>=TOTAL)T=0;playing=!playing;el('pp').textContent=playing?'Pause':'Play'};
+el('rs').onclick=()=>{T=0;lastCap=-1;playing=true;el('pp').textContent='Pause';begin()};
+el('prog').addEventListener('click',e=>{const r=el('prog').getBoundingClientRect();T=clamp((e.clientX-r.left)/r.width)*TOTAL*.999;lastCap=-1});
+el('prog').addEventListener('keydown',e=>{if(e.key==='ArrowRight')T=Math.min(TOTAL*.999,T+5);if(e.key==='ArrowLeft')T=Math.max(0,T-5);lastCap=-1});
+function res(){const ok=['c1','c2','c3','c4'].every(i=>el(i).checked);const r=el('res');r.className=ok?'ok':'no';r.textContent=ok?'You can apply. Email your reason and amount.':'Not eligible under the policy right now.'}
+['c1','c2','c3','c4'].forEach(i=>el(i).addEventListener('change',res));res();
+function resize(){const w=stageEl.clientWidth,h=stageEl.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+const lookAt=new THREE.Vector3(-8,2.4,0);let clock=performance.now();const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+camera.position.set(-8,3.4,13);
+function frame(now){
+  const dt=Math.min(.05,(now-clock)/1000);clock=now;
+  if(playing){T+=dt;if(T>=TOTAL){T=TOTAL;playing=false;el('pp').textContent='Replay'}}
+  let idx=0;for(let i=0;i<scenes.length;i++)if(T>=cum[i])idx=i;
+  const s=scenes[idx],lt=T-cum[idx];
+  all.forEach(c=>idle(c,T));ravi.position.y=0;
+  const rs=raviState(idx,lt);ravi.position.x=rs.x;ravi.position.z=rs.z;
+  if(rs.w)walkAnim(ravi,T);
+  ravi.rotation.y=idx>=5?-.35:0;
+  // reset scene-driven objects when not active
+  if(idx!==5){}
+  s.upd(lt);
+  const c=s.cam(lt),k=1-Math.exp(-dt*(reduce?20:3.2));
+  const tp=new THREE.Vector3(c[0]+mouse.x*1.3+Math.sin(T*.3)*.4,c[1]-mouse.y*.6,c[2]);
+  camera.position.lerp(tp,k);lookAt.lerp(new THREE.Vector3(c[3],c[4],0),k);camera.lookAt(lookAt);
+  key.position.set(camera.position.x+6,12,14);key.target.position.set(camera.position.x,0,0);key.target.updateMatrixWorld();
+  if(idx!==lastIdx){lastIdx=idx;el('chap').textContent=(idx+1)+' / '+scenes.length+'  ·  '+s.chapter.toUpperCase();
+    [...chips.children].forEach((b,i)=>b.classList.toggle('on',i===idx));el('check').classList.toggle('show',idx===7)}
+  el('title').style.opacity=idx===0&&lt<6.5?1:0;
+  let ci=0;s.caps.forEach((cp,i)=>{if(lt>=cp[0])ci=i});const kk=idx*10+ci;
+  if(kk!==lastCap){lastCap=kk;el('cap').textContent=s.caps[ci][1]}
+  el('fill').style.width=(T/TOTAL*100)+'%';el('time').textContent=fmt(T)+' / '+fmt(TOTAL);
+  renderer.render(scene,camera);requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+})();
+</script>

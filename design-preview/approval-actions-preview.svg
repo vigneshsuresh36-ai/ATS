@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="310" viewBox="0 0 1200 310">
+<rect width="1200" height="310" fill="#f8f7f4"/>
+<text x="36" y="42" font-family="Segoe UI, Arial" font-size="20" font-weight="700" fill="#1d1d1f">Requisition approvals</text>
+<text x="36" y="68" font-family="Segoe UI, Arial" font-size="13" fill="#6d6e6a">Review requests to open or fill a role before recruiting begins.</text>
+<rect x="36" y="92" width="1128" height="156" rx="12" fill="white" stroke="#e2e2dc"/>
+<path d="M48 92h1104a12 12 0 0 1 12 12v37H36v-37a12 12 0 0 1 12-12" fill="#f1f0eb"/>
+<g font-family="Segoe UI, Arial" font-size="11" font-weight="600" fill="#777971"><text x="54" y="122">ROLE</text><text x="240" y="122">STATUS</text><text x="410" y="122">DEPARTMENT</text><text x="575" y="122">LOCATION</text><text x="750" y="122">ACTIONS</text></g>
+<g font-family="Segoe UI, Arial" font-size="13" fill="#272825"><text x="54" y="197" font-weight="600">Test Role</text><text x="410" y="197">Technology</text><text x="575" y="197">Bengaluru</text></g>
+<rect x="240" y="175" width="137" height="31" rx="5" fill="#faf1df" stroke="#ebd5aa"/><text x="252" y="195" font-family="Segoe UI, Arial" font-size="11" font-weight="600" fill="#966411">Pending approval</text>
+<g font-family="Segoe UI, Arial" font-size="12" font-weight="600">
+<rect x="750" y="173" width="90" height="36" rx="6" fill="white" stroke="#d7d8d3"/><text x="761" y="196" fill="#20211f">✦ AI brief</text>
+<rect x="847" y="173" width="75" height="36" rx="6" fill="white" stroke="#d7d8d3"/><text x="864" y="196" fill="#20211f">Details</text>
+<rect x="929" y="173" width="90" height="36" rx="6" fill="#1d1d1f" stroke="#1d1d1f"/><text x="944" y="196" fill="white">✓ Approve</text>
+<rect x="1026" y="173" width="80" height="36" rx="6" fill="white" stroke="#d7d8d3"/><text x="1039" y="196" fill="#9e3d38">Reject</text>
+</g>
+<text x="36" y="283" font-family="Segoe UI, Arial" font-size="12" fill="#777971">Preview · Details and AI brief use neutral outlines; Approve is the primary action; Reject uses restrained red text.</text>
+</svg>

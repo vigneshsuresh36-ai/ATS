@@ -1,8 +1,17 @@
+import { jobDescriptionMark } from "@/lib/jobDescriptionFormatting";
+import { recruiterCollaborators } from "@/lib/recruiterAssignment";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
+import { requestStatusAudit } from "@/lib/requestStatusAudit";
+import { readRecordActivity } from "@/lib/statusAudit";
+import { requireAdminDb } from "@/lib/firebaseAdmin";
 import { ApiError, errResponse, json, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
-import { addAudit, getRequisition, getUserByEmail, updateRequisition } from "@/lib/db";
+import { addAudit, createNotifications, getRequisition, getSocialLinkForRecruiter, getUserByEmail, listCandidates, listUsers, updateRequisition } from "@/lib/db";
 import { canApprove, canRecruit, userCoversDepartment } from "@/lib/roles";
+import { canEditRequisitionPriority, isRequisitionClosed } from "@/lib/requisitionStatus";
 import type { Requisition } from "@/lib/types";
+import { hidePriorityForRole } from "@/lib/requisitionPriorityAccess";
+import { requisitionDecisionRecipients } from "@/lib/requisitionNotificationRecipients";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -25,15 +34,21 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     ) {
       throw new ApiError(403, "Not your department.");
     }
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
+
+
+    if (req.nextUrl.searchParams.get("activity") === "1") {
+      return json({ activity: await readRecordActivity(requireAdminDb(), "requisition", r.id) });
+    }
+
     const approver = r.approvedBy
       ? await getUserByEmail(r.approvedBy)
       : null;
     return json({
       requisition: {
-        ...r,
+        ...hidePriorityForRole(r, user.role),
         approvedByName: r.approvedByName || approver?.name,
       },
     });
@@ -49,31 +64,207 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     const r = await getRequisition(id);
     if (!r) throw new ApiError(404, "Requisition not found.");
     await requireManagedRequisitionAccess(user, r);
+    if (isRequisitionClosed(r.status)) {
+      throw new ApiError(400, "Closed positions cannot be changed.");
+    }
     const body = await req.json();
 
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
 
-    if (body.recruiterEmail !== undefined) {
-      if (user.role !== "Admin") throw new ApiError(403, "Only an Admin can assign a recruiter.");
-      const recruiterEmail = String(body.recruiterEmail || "").trim().toLowerCase();
-      if (recruiterEmail) {
-        const recruiter = await getUserByEmail(recruiterEmail);
-        if (!recruiter || !recruiter.active || recruiter.role !== "Recruiter" || recruiter.managerEmail !== user.email) {
-          throw new ApiError(400, "Choose an active recruiter on your managed team.");
-        }
+    if (body.action === "updateRoleSummary") {
+      const canEditSummary = user.role === "Admin" || canRecruit(user.role) ||
+        (user.role === "HiringManager" && r.raisedByEmail === user.email && r.status === "PendingApproval");
+      if (!canEditSummary) throw new ApiError(403, "Cannot edit this requisition.");
+      const fields = ["department", "location", "employment", "level", "priority"] as const;
+      for (const field of fields) {
+        if (typeof body[field] !== "string" || !body[field].trim() || body[field].trim().length > 300) throw new ApiError(400, `Enter a valid ${field}.`);
       }
-      const updated = await updateRequisition(id, { recruiterEmail });
+      const { salaryMin, salaryMax, openings } = body;
+      if (![salaryMin, salaryMax, openings].every(Number.isSafeInteger) || salaryMin < 0 || salaryMax < salaryMin || openings < 1) throw new ApiError(400, "Enter a valid salary range and a positive number of openings.");
+      const replacementCount = new Set((r.replacementEmployeeCode || "").split(/[\s,]+/).filter(Boolean)).size;
+      if (r.requisitionType === "Replacement" && openings > replacementCount) throw new ApiError(400, "Openings cannot exceed the number of replacement employee codes.");
+      const updated = await updateRequisition(id, { department: body.department.trim(), ...(body.department.trim() !== r.department ? { subDepartment: "" } : {}), location: body.location.trim(), employment: body.employment.trim(), level: body.level.trim(), priority: body.priority.trim(), salaryMin, salaryMax, openings });
+      await addAudit({ action: "requisition.summary.update", actorEmail: user.email, actingAdminEmail: user.actingAdminEmail, entityType: "requisition", entityId: id, detail: "Role summary updated" });
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
+    }
+
+    if (body.action === "setCareersVisibility") {
+      if (user.role !== "Admin" && !canRecruit(user.role)) throw new ApiError(403, "Only an Admin or assigned Recruiter can manage careers visibility.");
+      if (typeof body.published !== "boolean") throw new ApiError(400, "Choose whether to list this role publicly.");
+      if (body.published) {
+        if (!["Approved", "Position Reopened", "Partially Fulfilled"].includes(r.status) || !r.recruiterEmail) throw new ApiError(400, "The role must be open and assigned to a recruiter before it can be listed.");
+        if (!(await getSocialLinkForRecruiter(id, r.recruiterEmail))) throw new ApiError(400, "Generate an application link before listing this role on the careers page.");
+      }
+      const updated = await updateRequisition(id, { careersPublished: body.published });
+      await addAudit({ action: "requisition.careers.visibility", actorEmail: user.email, actingAdminEmail: user.actingAdminEmail, entityType: "requisition", entityId: id, detail: body.published ? "Listed on careers page" : "Removed from careers page" });
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
+    }
+
+    if (body.referralBonus !== undefined || body.referralInterviewBonus !== undefined || body.employeeReferralEnabled !== undefined) {
+      if (user.role !== "Admin") throw new ApiError(403, "Only an Admin can set a referral bonus.");
+      if (body.employeeReferralEnabled !== undefined && typeof body.employeeReferralEnabled !== "boolean") {
+        throw new ApiError(400, "Choose whether this position is available for employee referrals.");
+      }
+      const referralBonus = body.referralBonus === undefined
+        ? Number(r.referralBonus || 0)
+        : Number(body.referralBonus);
+      const referralInterviewBonus = body.referralInterviewBonus === undefined
+        ? Number(r.referralInterviewBonus || 0)
+        : Number(body.referralInterviewBonus);
+      if (!Number.isSafeInteger(referralBonus) || referralBonus < 0 || referralBonus > 100_000_000) {
+        throw new ApiError(400, "Enter a whole-number referral bonus from 0 to 100,000,000.");
+      }
+      if (!Number.isSafeInteger(referralInterviewBonus) || referralInterviewBonus < 0 || referralInterviewBonus > 100_000_000) {
+        throw new ApiError(400, "Enter a whole-number per-interview bonus from 0 to 100,000,000.");
+      }
+      const employeeReferralEnabled = body.employeeReferralEnabled === undefined
+        ? r.employeeReferralEnabled === true
+        : body.employeeReferralEnabled;
+      const hasEmployeeReferrals = (await listCandidates(id, true)).some(
+        (candidate) => candidate.source === "Employee Referral"
+      );
+      if (hasEmployeeReferrals && (
+        (body.referralBonus !== undefined && referralBonus !== Number(r.referralBonus || 0)) ||
+        (body.referralInterviewBonus !== undefined && referralInterviewBonus !== Number(r.referralInterviewBonus || 0))
+      )) {
+        throw new ApiError(409, "Referral bonuses cannot be changed after an employee has referred a candidate. You can still disable referrals for this position.");
+      }
+      if (employeeReferralEnabled && referralBonus <= 0) {
+        throw new ApiError(400, "Set a referral bonus greater than 0 before making this position available to employees.");
+      }
+      const patch: Partial<Requisition> = {};
+      if (body.referralBonus !== undefined) patch.referralBonus = referralBonus;
+      if (body.referralInterviewBonus !== undefined) patch.referralInterviewBonus = referralInterviewBonus;
+      if (body.employeeReferralEnabled !== undefined) patch.employeeReferralEnabled = employeeReferralEnabled;
+      const updated = await updateRequisition(id, patch);
+      if (body.referralBonus !== undefined) {
+        await addAudit({
+          action: "requisition.referral_bonus.update",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "requisition",
+          entityId: id,
+          detail: String(referralBonus),
+        });
+      }
+      if (body.employeeReferralEnabled !== undefined) {
+        await addAudit({
+          action: "requisition.employee_referral.update",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "requisition",
+          entityId: id,
+          detail: employeeReferralEnabled ? "Enabled" : "Disabled",
+        });
+      }
+      if (body.referralInterviewBonus !== undefined) {
+        await addAudit({
+          action: "requisition.referral_interview_bonus.update",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "requisition",
+          entityId: id,
+          detail: String(referralInterviewBonus),
+        });
+      }
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
+    }
+
+    if (body.jdText !== undefined) {
+      if (user.role !== "Admin" && user.role !== "Recruiter") throw new ApiError(403, "Only an Admin or assigned Recruiter can edit the job description.");
+      if (typeof body.jdText !== "string" || !body.jdText.trim()) {
+        throw new ApiError(400, "Enter a job description before saving.");
+      }
+      const jdText = body.jdText.trim();
+      const formatting = jobDescriptionMark.array().max(jdText.length).safeParse(body.jdFormatting ?? []);
+      if (!formatting.success || formatting.data.some((mark, index, marks) =>
+        mark.start >= mark.end || mark.end > jdText.length || (index > 0 && mark.start < marks[index - 1].end)
+      )) {
+        throw new ApiError(400, "Invalid job description formatting.");
+      }
+      const updated = await updateRequisition(id, { jdText, jdFormatting: formatting.data });
       await addAudit({
-        action: "requisition.recruiter.assign",
+        action: "requisition.jd.update",
         actorEmail: user.email,
         actingAdminEmail: user.actingAdminEmail,
         entityType: "requisition",
         entityId: id,
-        detail: recruiterEmail || "Unassigned",
+        detail: "Job description updated",
       });
-      return json({ requisition: updated });
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
+    }
+
+    if (body.recruiterEmail !== undefined || body.recruiterCollaboratorEmails !== undefined) {
+      if (user.role !== "Admin") throw new ApiError(403, "Only an Admin can assign a recruiter.");
+      const recruiterEmail = String(body.recruiterEmail ?? r.recruiterEmail ?? "").trim().toLowerCase();
+      const requested: unknown = body.recruiterCollaboratorEmails ?? r.recruiterCollaboratorEmails ?? [];
+      if (!Array.isArray(requested) || requested.length > 50 || requested.some((email) => typeof email !== "string" || !email.trim())) {
+        throw new ApiError(400, "Choose valid recruiter collaborators.");
+      }
+      const collaborators = recruiterCollaborators(requested).filter((email) => email !== recruiterEmail);
+      if (!recruiterEmail && collaborators.length) throw new ApiError(400, "Choose a primary recruiter before adding collaborators.");
+      const existing = recruiterCollaborators(r.recruiterCollaboratorEmails);
+      const accountsToValidate = [recruiterEmail, ...collaborators].filter((email) => email && email !== r.recruiterEmail && !existing.includes(email));
+      if (recruiterEmail && recruiterEmail !== r.recruiterEmail && !accountsToValidate.includes(recruiterEmail)) accountsToValidate.push(recruiterEmail);
+      const accounts = await Promise.all(accountsToValidate.map(getUserByEmail));
+      if (accounts.some((account) => !account?.active || account.role !== "Recruiter" || account.managerEmail !== user.email)) {
+        throw new ApiError(400, "Choose active recruiters on your managed team.");
+      }
+      const patch: Partial<Requisition> = { recruiterEmail, recruiterCollaboratorEmails: collaborators };
+      if (body.priorityLevel !== undefined) {
+        const priorityLevel = String(body.priorityLevel);
+        if (!canEditRequisitionPriority(r.status)) {
+          throw new ApiError(400, "Priority can only be changed after a position is approved.");
+        }
+        if (!["P1", "P2", "P3", "P4"].includes(priorityLevel)) {
+          throw new ApiError(400, "Choose a priority from P1 to P4.");
+        }
+        patch.priorityLevel = priorityLevel;
+      }
+      const currentRecruiter = (r.recruiterEmail || "").trim().toLowerCase();
+      const primaryChanged = currentRecruiter !== recruiterEmail;
+      const collaboratorsChanged = existing.join(",") !== collaborators.join(",");
+      const reason = primaryChanged
+        ? (currentRecruiter ? body.reason : "Recruiters assigned to an unassigned requisition.")
+        : (body.reason ?? "Recruiter collaborators updated.");
+      const audit = primaryChanged || collaboratorsChanged
+        ? await requestStatusAudit(user, reason)
+        : undefined;
+      const updated = await updateRequisition(id, patch, audit, r);
+      if (patch.priorityLevel) {
+        await addAudit({
+          action: "requisition.priority.update",
+          actorEmail: user.email,
+          actingAdminEmail: user.actingAdminEmail,
+          entityType: "requisition",
+          entityId: id,
+          detail: patch.priorityLevel,
+        });
+      }
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
+    }
+
+    if (body.priorityLevel !== undefined) {
+      if (user.role !== "Admin") throw new ApiError(403, "Only an Admin can update position priority.");
+      if (!canEditRequisitionPriority(r.status)) {
+        throw new ApiError(400, "Priority can only be changed after a position is approved.");
+      }
+      const priorityLevel = String(body.priorityLevel);
+      if (!["P1", "P2", "P3", "P4"].includes(priorityLevel)) {
+        throw new ApiError(400, "Choose a priority from P1 to P4.");
+      }
+      const updated = await updateRequisition(id, { priorityLevel });
+      await addAudit({
+        action: "requisition.priority.update",
+        actorEmail: user.email,
+        actingAdminEmail: user.actingAdminEmail,
+        entityType: "requisition",
+        entityId: id,
+        detail: priorityLevel,
+      });
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
     }
 
     if (body.status !== undefined) {
@@ -91,16 +282,8 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       }
       const updated = await updateRequisition(id, {
         status: status as Requisition["status"],
-      });
-      await addAudit({
-        action: "requisition.status.update",
-        actorEmail: user.email,
-        actingAdminEmail: user.actingAdminEmail,
-        entityType: "requisition",
-        entityId: id,
-        detail: `${r.status} -> ${status}`,
-      });
-      return json({ requisition: updated });
+      }, await requestStatusAudit(user, body.reason), r);
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
     }
 
     if (body.action === "approve" || body.action === "reject") {
@@ -122,34 +305,35 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
           approvedAt: new Date().toISOString(),
           approvedBy: user.email,
           approvedByName: user.name,
-        });
-        await addAudit({
-          action: "requisition.approve",
-          actorEmail: user.email,
-          actingAdminEmail: user.actingAdminEmail,
-          entityType: "requisition",
-          entityId: id,
-        });
-        return json({ requisition: updated });
+        }, await requestStatusAudit(user, body.reason), r);
+        const recipients = requisitionDecisionRecipients(await listUsers(), r, r.raisedByEmail, user.email);
+        await createNotifications(recipients.map((recipientEmail) => ({
+          recipientEmail,
+          type: "requisition-approved" as const,
+          requisitionId: r.id,
+          title: "Requisition approved",
+          message: `${r.title} (${r.id}) was approved by ${user.name}.`,
+        })));
+        return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
       }
-      const reason = String(body.reason || "").trim();
-      if (!reason) throw new ApiError(400, "A rejection reason is required.");
+      const audit = await requestStatusAudit(user, body.reason);
+      const reason = audit.reason;
       const updated = await updateRequisition(id, {
         status: "Rejected",
         rejectionReason: reason,
         approvedBy: user.email,
         approvedByName: user.name,
         approvedAt: new Date().toISOString(),
-      });
-      await addAudit({
-        action: "requisition.reject",
-        actorEmail: user.email,
-        actingAdminEmail: user.actingAdminEmail,
-        entityType: "requisition",
-        entityId: id,
-        detail: reason,
-      });
-      return json({ requisition: updated });
+      }, audit, r);
+      const recipients = requisitionDecisionRecipients(await listUsers(), r, r.raisedByEmail, user.email);
+      await createNotifications(recipients.map((recipientEmail) => ({
+        recipientEmail,
+        type: "requisition-rejected" as const,
+        requisitionId: r.id,
+        title: "Requisition rejected",
+        message: `${r.title} (${r.id}) was rejected by ${user.name}. Reason: ${reason}`,
+      })));
+      return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
     }
 
     const canEdit =
@@ -180,8 +364,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     ]) {
       if (body[k] !== undefined) patch[k] = body[k];
     }
+    if (typeof patch.department === "string" && patch.department !== r.department) patch.subDepartment = "";
     const updated = await updateRequisition(id, patch);
-    return json({ requisition: updated });
+    return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
   } catch (e) {
     return errResponse(e);
   }

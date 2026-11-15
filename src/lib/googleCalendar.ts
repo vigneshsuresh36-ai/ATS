@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { isCalendarEnabled } from "./calendarConfig";
@@ -60,7 +62,21 @@ async function getCalendarClient() {
   return google.calendar({ version: "v3", auth });
 }
 
+/** Reject unknown calendars rather than treating missing free/busy data as availability. */
+export async function getInterviewBusyPeriods(interviewerEmails: string[], startIso: string, endIso: string) {
+  const calendar = await getCalendarClient();
+  const response = await calendar.freebusy.query({ requestBody: { timeMin: startIso, timeMax: endIso, items: interviewerEmails.map((id) => ({ id })) } });
+  const result = response.data.calendars || {};
+  return interviewerEmails.flatMap((email) => {
+    const entry = result[email];
+    if (!entry || entry.errors?.length || !entry.busy) throw new Error(`Free/busy is unavailable for ${email}. Check calendar sharing and service access.`);
+    return entry.busy.map((period) => ({ start: period.start || "", end: period.end || "" }));
+  });
+}
+
 export type CreateInterviewEventInput = {
+  video: boolean;
+  location?: string;
   summary: string;
   description: string;
   startIso: string;
@@ -98,43 +114,52 @@ export async function createInterviewCalendarEvent(
     ),
   ].map((email) => ({ email }));
 
-  const requestId = `ats-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
   const res = await calendar.events.insert({
     calendarId: "primary",
-    conferenceDataVersion: 1,
-    sendUpdates: "all",
+    conferenceDataVersion: input.video ? 1 : 0,
+    sendUpdates: input.video ? "none" : "all",
     requestBody: {
       summary: input.summary,
+      location: input.location,
       description: input.description,
       start: { dateTime: start.toISOString(), timeZone },
       end: { dateTime: end.toISOString(), timeZone },
-      attendees,
+      attendees: input.video ? undefined : attendees,
       guestsCanModify: false,
       guestsCanInviteOthers: false,
-      conferenceData: {
+      conferenceData: input.video ? {
         createRequest: {
-          requestId,
+          requestId: randomUUID(),
           conferenceSolutionKey: { type: "hangoutsMeet" },
         },
-      },
+      } : undefined,
     },
   });
 
-  const event = res.data;
-  const meetLink =
-    event.hangoutLink ||
-    event.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")
-      ?.uri ||
-    undefined;
+  let event = res.data;
+  const eventId = event.id;
+  if (!eventId) throw new Error("Calendar event created without an id.");
+  if (!input.video) return { eventId, htmlLink: event.htmlLink || undefined };
 
-  if (!event.id) throw new Error("Calendar event created without an id.");
-
-  return {
-    eventId: event.id,
-    htmlLink: event.htmlLink || undefined,
-    meetLink,
-  };
+  try {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const meetLink = event.hangoutLink || event.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri;
+      if (meetLink) {
+        await calendar.events.patch({
+          calendarId: "primary", eventId, conferenceDataVersion: 1, sendUpdates: "all",
+          requestBody: { attendees },
+        });
+        return { eventId, htmlLink: event.htmlLink || undefined, meetLink };
+      }
+      if (event.conferenceData?.createRequest?.status?.statusCode === "failure") break;
+      await delay(750);
+      event = (await calendar.events.get({ calendarId: "primary", eventId })).data;
+    }
+    throw new Error("Google Meet could not create a video link for the organizer.");
+  } catch (error) {
+    await calendar.events.delete({ calendarId: "primary", eventId, sendUpdates: "all" }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function cancelInterviewCalendarEvent(eventId: string) {
@@ -163,7 +188,10 @@ export async function updateInterviewCalendarEvent(
     eventId,
   });
   const timeZone = process.env.GOOGLE_CALENDAR_TIMEZONE || "Asia/Kolkata";
-  const duration = patch.durationMinutes || 60;
+  const originalStart = Date.parse(existing.data.start?.dateTime || "");
+  const originalEnd = Date.parse(existing.data.end?.dateTime || "");
+  const existingDuration = (originalEnd - originalStart) / 60_000;
+  const duration = patch.durationMinutes || (Number.isFinite(existingDuration) && existingDuration > 0 ? existingDuration : 60);
   const startIso = patch.startIso || existing.data.start?.dateTime;
   if (!startIso) throw new Error("Event has no start time.");
   const start = new Date(startIso);

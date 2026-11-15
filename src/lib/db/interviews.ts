@@ -1,3 +1,6 @@
+import { driveConflict } from "../recruitmentDrive";
+import { ApiError } from "../auth";
+import { appendStatusAudit, type StatusAuditContext } from "../statusAudit";
 import { requireAdminDb } from "../firebaseAdmin";
 import type {
   AuditLog,
@@ -9,10 +12,29 @@ import type {
 import { newId, now } from "./ids";
 
 export async function createInterview(
-  input: Omit<Interview, "id" | "createdAt">
+  input: Omit<Interview, "id" | "createdAt">,
+  audit: StatusAuditContext,
 ): Promise<Interview> {
   const iv: Interview = { ...input, id: newId("INT"), createdAt: now() };
-  await requireAdminDb().collection("interviews").doc(iv.id).set(iv);
+  const db = requireAdminDb();
+  await db.runTransaction(async (transaction) => {
+    const lock = db.collection("system").doc("interview-bookings");
+    await transaction.get(lock);
+    {
+      const records = await transaction.get(db.collection("interviews"));
+      const existing = records.docs.map((record) => record.data() as Interview);
+      if (existing.some((item) => item.candidateId === iv.candidateId && item.reqId === iv.reqId && (item.roundIndex || 1) === iv.roundIndex && item.status !== "Cancelled")
+        || driveConflict({ candidateId: iv.candidateId, datetime: iv.datetime, durationMinutes: iv.durationMinutes ?? 60,
+          panel: { interviewers: iv.interviewerEmails, room: iv.room || "" } }, iv.driveId ? existing : existing.filter((item) => item.driveId), iv.breakMinutes ?? 0, iv.officeLocation)) {
+        throw new ApiError(409, "This drive slot conflicts with another booking. Refresh the timetable.");
+      }
+    }
+    transaction.set(lock, { updatedAt: now() });
+    transaction.create(db.collection("interviews").doc(iv.id), iv);
+    appendStatusAudit(db, transaction, {
+      entityType: "interview", entityId: iv.id, field: "status", previousValue: null, newValue: iv.status,
+    }, audit);
+  });
   return iv;
 }
 
@@ -47,11 +69,28 @@ export async function listInterviews(filter?: {
   return list;
 }
 
-export async function updateInterview(id: string, patch: Partial<Interview>) {
-  await requireAdminDb()
-    .collection("interviews")
-    .doc(id)
-    .set(patch, { merge: true });
+export async function updateInterview(
+  id: string,
+  patch: Partial<Interview>,
+  audit?: StatusAuditContext,
+  expectedStatus?: Interview["status"],
+) {
+  const db = requireAdminDb();
+  const ref = db.collection("interviews").doc(id);
+  await db.runTransaction(async (transaction) => {
+    const current = (await transaction.get(ref)).data() as Interview | undefined;
+    if (!current) throw new ApiError(404, "Interview not found.");
+    if (expectedStatus && expectedStatus !== current.status) {
+      if (audit?.source === "System") return;
+      throw new ApiError(409, "This interview changed. Refresh it and try again.");
+    }
+    if (patch.status !== undefined) {
+      appendStatusAudit(db, transaction, {
+        entityType: "interview", entityId: id, field: "status", previousValue: current.status ?? null, newValue: patch.status,
+      }, audit);
+    }
+    transaction.set(ref, patch, { merge: true });
+  });
 }
 
 export async function createFeedback(

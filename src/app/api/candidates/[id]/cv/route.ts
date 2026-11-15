@@ -1,3 +1,4 @@
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import { getCandidate, getRequisition } from "@/lib/db";
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     ) {
       throw new ApiError(403, "Not your department.");
     }
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
 

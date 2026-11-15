@@ -16,7 +16,7 @@ export function statusColor(s: string) {
   if (x === "position closed" || x === "closed") return "#4b5563";
   if (x === "position reopened") return "#1f7a4d";
   if (x === "partially fulfilled") return "#1f7a4d";
-  if (x === "position fulfilled") return "#1f7a4d";
+  if (x === "position fulfilled") return "#3a6ea5";
   if (x.includes("reject") || x === "rejected") return "#9a3b3b";
   if (x.includes("pending")) return "#b06a00";
   if (x.includes("hmapproved") || x === "hmapproved") return "#1f7a4d";
@@ -135,7 +135,7 @@ export const cancelBtn: CSSProperties = {
   cursor: "pointer",
 };
 export const saveBtn: CSSProperties = {
-  background: "#2f6f4f",
+  background: "#181818",
   color: "#fff",
   border: 0,
   borderRadius: 8,

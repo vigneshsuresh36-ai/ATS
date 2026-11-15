@@ -1,15 +1,23 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { indianCityLabel } from "@/lib/indianCities";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireUser } from "@/lib/auth";
 import {
   addAudit,
   createCandidate,
   getRequisition,
+  getOrg,
   listCandidates,
+  findCandidateProfilesByContact,
   listRequisitions,
   listUsers,
+  listVendorSpendRecords,
+  saveCandidateApplicationSource,
 } from "@/lib/db";
 import { canRecruit } from "@/lib/roles";
 import { adminStorage } from "@/lib/firebaseAdmin";
+import type { JobBoardSubscription, RecruitmentConsultant } from "@/lib/types";
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,13 +27,13 @@ export async function GET(req: NextRequest) {
     if (reqId) {
       const r = await getRequisition(reqId);
       if (!r) throw new ApiError(404, "Requisition not found.");
-      if (user.role === "HiringManager" && r.raisedByEmail !== user.email) {
+      if (!canViewScopedRequisition(user, r)) {
         throw new ApiError(403, "Not your requisition.");
       }
       if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === r.department.toLowerCase())) {
         throw new ApiError(403, "Not your department.");
       }
-      if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+      if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
         throw new ApiError(403, "This requisition is not assigned to you.");
       }
       if (user.role === "Admin") {
@@ -52,10 +60,10 @@ export async function GET(req: NextRequest) {
             .map((member) => member.email))
         : new Set<string>();
       const visibleReqs = user.role === "Recruiter"
-        ? requisitions.filter((r) => r.recruiterEmail === user.email)
+        ? requisitions.filter((r) => isAssignedRecruiter(r, user.email))
         : user.role === "Admin"
           ? requisitions.filter((r) => !r.recruiterEmail || teamEmails.has(r.recruiterEmail))
-          : requisitions;
+          : requisitions.filter((request) => canViewScopedRequisition(user, request));
       const visibleIds = new Set(visibleReqs.map((r) => r.id));
       candidates = candidates.filter((candidate) => visibleIds.has(candidate.reqId));
     }
@@ -84,7 +92,7 @@ export async function POST(req: NextRequest) {
         throw new ApiError(403, "This requisition is outside your managed team.");
       }
     }
-    if (user.role === "Recruiter" && r.recruiterEmail !== user.email) {
+    if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
     if (
@@ -104,13 +112,24 @@ export async function POST(req: NextRequest) {
     const name = String(body.name || extractedName || "").trim();
     const email = String(body.email || extractedEmail || "").trim();
     const phone = String(body.phone || extractedPhone || "").trim();
-    const location = String(body.location || "").trim();
+    const location = indianCityLabel(body.location);
+    if (!location) throw new ApiError(400, "Choose an Indian city from the location suggestions.");
     const currentCtc = String(body.currentCtc || "").trim();
     const currentFixedCtc = String(body.currentFixedCtc || currentCtc).trim();
     const currentVariableCtc = String(body.currentVariableCtc || "").trim();
     const presentEsops = String(body.presentEsops || "").trim();
     const expectedCtc = String(body.expectedCtc || "").trim();
     const notice = String(body.notice || "").trim();
+    const configuredFields = (await getOrg()).candidateCustomFields || [];
+    const suppliedFields = body.customFields && typeof body.customFields === "object" && !Array.isArray(body.customFields) ? body.customFields as Record<string, unknown> : {};
+    const customFields = configuredFields.filter((field) => field.enabled).map((field) => {
+      const raw = suppliedFields[field.id];
+      if (raw !== undefined && typeof raw !== "string") throw new ApiError(400, `Enter a valid value for ${field.label}.`);
+      const value = typeof raw === "string" ? raw.trim() : "";
+      if (value.length > 500) throw new ApiError(400, `${field.label} must be 500 characters or fewer.`);
+      if (field.required && !value) throw new ApiError(400, `${field.label} is required.`);
+      return { id: field.id, label: field.label, value };
+    }).filter((field) => field.value);
     if (!name || !email) {
       throw new ApiError(400, "Name and email are required.");
     }
@@ -130,18 +149,34 @@ export async function POST(req: NextRequest) {
       throw new ApiError(400, "Resume upload is required.");
     }
 
-    const normalizedEmail = email.toLowerCase();
-    const normalizedPhone = phone.replace(/\D/g, "");
-    const duplicate = (await listCandidates()).find((candidate) => {
-      const sameEmail = candidate.email?.trim().toLowerCase() === normalizedEmail;
-      const candidatePhone = candidate.phone?.replace(/\D/g, "") || "";
-      return sameEmail || (normalizedPhone && candidatePhone === normalizedPhone);
-    });
-    if (duplicate) {
-      throw new ApiError(
-        409,
-        `Duplicate candidate detected: ${duplicate.name} already exists for requisition ${duplicate.reqId}.`
-      );
+    const candidateProfileId = String(body.candidateProfileId || "");
+    const profileMatches = await findCandidateProfilesByContact(email, phone);
+    if (profileMatches.length) {
+      const allCandidates = await listCandidates();
+      const requisitions = await listRequisitions();
+      const managedRecruiters = user.role === "Admin"
+        ? new Set((await listUsers()).filter((member) => member.role === "Recruiter" && member.managerEmail === user.email).map((member) => member.email))
+        : new Set<string>();
+      const visibleReqIds = new Set(requisitions.filter((requisition) => user.role === "Admin"
+        ? !requisition.recruiterEmail || managedRecruiters.has(requisition.recruiterEmail)
+        : isAssignedRecruiter(requisition, user.email)).map((requisition) => requisition.id));
+      const visibleProfileIds = new Set(allCandidates.filter((candidate) => candidate.reqId === "TALENT_POOL" || visibleReqIds.has(candidate.reqId)).map((candidate) => candidate.profileId).filter(Boolean));
+      const visibleMatches = profileMatches.filter((profile) => visibleProfileIds.has(profile.id));
+      if (visibleMatches.length !== profileMatches.length) {
+        return json({ error: "A possible match exists outside your candidate access. Ask an Admin to review it.", code: "CANDIDATE_MATCH_REVIEW" }, 409);
+      }
+      if (candidateProfileId && !visibleMatches.some((profile) => profile.id === candidateProfileId)) {
+        throw new ApiError(400, "Select a matching existing candidate profile.");
+      }
+      if (!candidateProfileId) {
+        return json({
+          error: "A candidate with this email or phone already exists. Select the existing profile to create another application without duplicating the candidate.",
+          code: "CANDIDATE_PROFILE_MATCH",
+          matches: visibleMatches.map((profile) => ({ profileId: profile.id, candidateId: profile.candidateId, name: profile.name })),
+        }, 409);
+      }
+    } else if (candidateProfileId) {
+      throw new ApiError(400, "Select a matching existing candidate profile.");
     }
     if (resumeText && !consentCaptured) {
       throw new ApiError(400, "Please confirm recruiter consent before saving resume-extracted candidate details.");
@@ -162,45 +197,78 @@ export async function POST(req: NextRequest) {
     }
 
     const source = body.source ? String(body.source).trim() : undefined;
-    const sourceDetail = body.sourceDetail
+    let sourceDetail = body.sourceDetail
       ? String(body.sourceDetail).trim()
       : undefined;
+    let referrerEmail: string | undefined;
+    const sourceVendorId = String(body.sourceVendorId || "").trim();
+    const sourceSubscriptionId = String(body.sourceSubscriptionId || "").trim();
+    const sourceNotes = String(body.sourceNotes || "").trim();
     if (source) {
       const allowed = new Set([
         "Job Board",
         "Employee Referral",
         "Consultant",
+        "Direct / Inbound",
+        "Walk-in",
+        "Career Page",
+        "Social Media",
+        "Campus Hiring",
+        "Other",
       ]);
       if (!allowed.has(source)) {
         throw new ApiError(400, "Invalid candidate source.");
       }
-      if (source === "Job Board" && !sourceDetail) {
+      if (source === "Job Board" && !sourceDetail && !sourceSubscriptionId) {
         throw new ApiError(400, "Select a job board.");
       }
       if (source === "Employee Referral" && !sourceDetail) {
         throw new ApiError(400, "Employee code is required for referrals.");
       }
-      if (source === "Consultant" && !sourceDetail) {
+      if (source === "Employee Referral") {
+        const employee = (await listUsers()).find((member) => member.active !== false && member.employeeCode?.trim().toLowerCase() === sourceDetail?.toLowerCase());
+        if (!employee?.employeeCode) throw new ApiError(400, "Choose an active employee code from Teams & Access.");
+        sourceDetail = employee.employeeCode.trim();
+        referrerEmail = employee.email.toLowerCase();
+      }
+      if (source === "Consultant" && !sourceDetail && !sourceVendorId) {
         throw new ApiError(400, "Select a consultant.");
+      }
+      if (["Social Media", "Other"].includes(source) && !sourceDetail) {
+        throw new ApiError(400, "Enter a source description.");
+      }
+      const vendorsEnabled = (await getOrg()).vendorsSpendEnabled === true;
+      if (vendorsEnabled && source === "Consultant") {
+        if (!sourceVendorId) throw new ApiError(400, "Select a managed recruitment consultant.");
+        const consultant = (await listVendorSpendRecords<RecruitmentConsultant>("consultants"))
+          .find((item) => item.id === sourceVendorId && item.status === "Active");
+        if (!consultant) throw new ApiError(400, "Choose an active managed recruitment consultant.");
+        sourceDetail = consultant.name;
+      }
+      if (vendorsEnabled && source === "Job Board") {
+        if (!sourceSubscriptionId) throw new ApiError(400, "Select an active managed job board subscription.");
+        const subscription = (await listVendorSpendRecords<JobBoardSubscription>("subscriptions"))
+          .find((item) => item.id === sourceSubscriptionId && item.status === "Active");
+        if (!subscription) throw new ApiError(400, "Choose an active managed job board subscription.");
+        sourceDetail = subscription.platformName;
       }
     }
 
     const cand = await createCandidate({
+      customFields,
       reqId,
       name,
       email,
       phone,
       location,
-      stage: "PendingHMApproval",
-      currentCtc: currentFixedCtc,
-      currentFixedCtc,
-      currentVariableCtc,
-      presentEsops,
-      expectedCtc,
-      notice,
-      remarks: body.remarks ? String(body.remarks) : undefined,
+      stage: "New",
       source,
       sourceDetail,
+      candidateProfileId: candidateProfileId || undefined,
+      referrerEmail,
+      sourceVendorId: sourceVendorId || undefined,
+      sourceSubscriptionId: sourceSubscriptionId || undefined,
+      sourceNotes: sourceNotes || undefined,
       cvPath,
       cvFileName,
       consentCaptured: resumeText ? consentCaptured : undefined,
@@ -210,6 +278,16 @@ export async function POST(req: NextRequest) {
       extractedName: resumeText ? extractedName || name : undefined,
       extractedPhone: resumeText ? extractedPhone || String(body.phone || "") : undefined,
       extractedEmail: resumeText ? extractedEmail || email : undefined,
+    });
+    await saveCandidateApplicationSource({
+      candidateId: cand.id,
+      requisitionId: reqId,
+      source: source || "Unknown",
+      ...(source === "Consultant" && sourceVendorId ? { consultantId: sourceVendorId } : {}),
+      ...(source === "Job Board" && sourceSubscriptionId ? { subscriptionId: sourceSubscriptionId } : {}),
+      ...(sourceNotes ? { sourceNotes } : {}),
+      submittedAt: cand.createdAt,
+      submittedBy: user.email,
     });
     await addAudit({
       action: "candidate.create",

@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { canViewScopedRequisition } from "./requisitionScope";
 import {
   ensureSeedUsers,
   getUserByEmail,
@@ -17,7 +17,7 @@ export class ApiError extends Error {
 }
 
 export async function requireUser(
-  req: NextRequest,
+  req: Request,
   minRole?: Role
 ): Promise<AppUser> {
   await ensureSeedUsers();
@@ -45,6 +45,13 @@ export async function requireUser(
     }
     user = { ...target, actingAdminEmail: authenticatedUser.email };
   }
+  if (user.role === "Employee") {
+    const employeeAllowedPaths = new Set(["/api/me", "/api/org", "/api/referrals", "/api/support-tickets"]);
+    const pathname = new URL(req.url).pathname;
+    if (!employeeAllowedPaths.has(pathname)) {
+      throw new ApiError(403, "Employee accounts can only access the enabled referral workspace.");
+    }
+  }
   if (minRole && !hasMinRole(user.role, minRole)) {
     throw new ApiError(
       403,
@@ -58,6 +65,7 @@ export async function requireManagedRequisitionAccess(
   user: AppUser,
   requisition: Requisition
 ) {
+  if (!canViewScopedRequisition(user, requisition)) throw new ApiError(403, "This requisition is outside your access scope.");
   if (user.role !== "Admin" || !requisition.recruiterEmail) return;
   const managedRecruiters = await listUsers();
   const assignedToTeam = managedRecruiters.some(

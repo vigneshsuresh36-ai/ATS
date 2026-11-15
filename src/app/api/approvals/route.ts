@@ -1,3 +1,4 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireUser } from "@/lib/auth";
 import { getRequisition, listCandidates, listRequisitions, listUsers } from "@/lib/db";
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
       return json({ requisitions: [], offerApprovals });
     }
     if (user.role === "HiringManager") {
-      const requisitions = await listRequisitions({ raisedByEmail: user.email });
+      const requisitions = (await listRequisitions({ raisedByEmail: user.email })).filter((request) => canViewScopedRequisition(user, request));
       const requisitionIds = new Set(requisitions.map((requisition) => requisition.id));
       const candidates = (await listCandidates()).filter(
         (candidate) => requisitionIds.has(candidate.reqId) && !!candidate.offerApprovalStatus
@@ -31,9 +32,10 @@ export async function GET(req: NextRequest) {
     if (!canApprove(user.role)) {
       throw new ApiError(403, "Department Head role required.");
     }
-    const requisitions = user.role === "Admin"
+    const pending = user.role === "Admin"
       ? await listRequisitions({ status: "PendingApproval" })
       : await listRequisitions({ departments: user.departments || [], status: "PendingApproval" });
+    const requisitions = pending.filter((request) => canViewScopedRequisition(user, request));
     let candidates = (await listCandidates()).filter((candidate) => candidate.offerApprovalStatus === "Pending");
     if (user.role === "Admin") {
       const teamEmails = new Set((await listUsers())
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
       candidate,
       requisition: await getRequisition(candidate.reqId),
     })))).filter(({ requisition }) =>
-      user.role === "Admin" || !!requisition && (user.departments || []).some((department) => department.toLowerCase() === requisition.department.toLowerCase())
+      user.role === "Admin" || !!requisition && canViewScopedRequisition(user, requisition)
     );
     return json({ requisitions, offerApprovals });
   } catch (e) {

@@ -10,10 +10,14 @@ export function TodayView({
   data,
   onReq,
   onCand,
+  upcomingJoiners = [],
+  onViewAllJoining,
 }: {
   data: Record<string, unknown> | null;
   onReq: (id: string) => void;
   onCand: (id: string) => void;
+  upcomingJoiners?: Item[];
+  onViewAllJoining?: () => void;
 }) {
   if (!data) return <div style={muted}>Loading dashboard...</div>;
 
@@ -25,8 +29,8 @@ export function TodayView({
     ["interviewsToSchedule", "Interviews to Schedule", "Approved candidates needing a slot", "#eef7f0"],
     ["pendingApprovals", "Pending Approvals", "Requisitions waiting for approval", "#fff7ec"],
     ["offersPending", "Offers Pending", "Offer requests awaiting decision", "#fff7ec"],
-    ["stuck", "SLA Breaches", "Candidates past the organisation SLA", "#fbeeee"],
-    ["reqsNeed", "Requisitions Needing Candidates", "Approved roles with no pipeline", "#f3f2ed"],
+    ["stuck", "Overdue Actions", "Candidates waiting beyond your target time", "#fbeeee"],
+    ["reqsNeed", "Roles Needing Candidates", "Approved roles with no pipeline", "#f3f2ed"],
   ] as const;
 
   const candidateItem = (item: Item, detail: string) => (
@@ -64,13 +68,20 @@ export function TodayView({
   };
 
   const totalOpen = tasks.reduce((total, [key]) => total + list(key).length, 0);
+  const attention = [
+    { key: "awaitingFb", label: "Review outstanding interview feedback", target: "dashboard-awaitingFb" },
+    { key: "pendingApprovals", label: "Review pending hiring requests", target: "dashboard-pendingApprovals" },
+    { key: "offersPending", label: "Review pending offers", target: "dashboard-offersPending" },
+    { key: "interviewsToday", label: "Prepare for today's interviews", target: "dashboard-interviewsToday" },
+  ].filter((item) => list(item.key).length > 0);
 
   return (
     <div className="ats-today-view">
+      <section className="ats-dashboard-attention" aria-label="Actions needing attention"><h3>Needs your attention</h3>{attention.length || upcomingJoiners.length ? <div>{attention.map((item) => <a href={`#${item.target}`} key={item.key}><span>{item.label}</span><strong>{list(item.key).length} →</strong></a>)}{upcomingJoiners.length > 0 && onViewAllJoining && <button type="button" onClick={onViewAllJoining}><span>Review upcoming joiners</span><strong>{upcomingJoiners.length} →</strong></button>}</div> : <p>No actions need your attention right now.</p>}</section>
       <div className="ats-dashboard-hero" style={hero}>
         <div>
           <h2 className="ats-heading-section" style={{ fontFamily: 'Inter, "Segoe UI", sans-serif' }}>Today&apos;s Tasks</h2>
-          <p className="ats-heading-subtitle" style={{ color: 'rgba(255,255,255,0.95)' }}>5 things need you today</p>
+          <p className="ats-heading-subtitle">{totalOpen ? `${totalOpen} open items across your hiring workflow` : "You’re all caught up. New tasks will appear here."}</p>
         </div>
         <div style={attentionBadge}>{totalOpen} open items</div>
       </div>
@@ -95,6 +106,12 @@ export function TodayView({
         <DashboardList id="dashboard-stuck" title="SLA Breaches" items={list("stuck")} empty="No SLA breaches." render={(item) => candidateItem(item, `${String(item.days || 0)}d in stage`)} />
         <DashboardList id="dashboard-reqsNeed" title="Requisitions Needing Candidates" items={list("reqsNeed")} empty="All approved roles have candidates." render={requisitionItem} />
       </div>
+      {upcomingJoiners.length > 0 && <section className="ats-upcoming-joiners" aria-label="Upcoming joiners">
+        <div className="ats-upcoming-joiners-heading"><div><h3>Upcoming Joiners</h3><p>Expected to join within the next 7 days</p></div><button type="button" onClick={onViewAllJoining}>View All</button></div>
+        <div className="ats-upcoming-joiners-list">{upcomingJoiners.map((item) => <button type="button" key={String(item.id)} onClick={() => onCand(String(item.id))}>
+          <strong>{String(item.name || "Candidate")}</strong><span>{String(item.requisitionTitle || "Position")}</span><time>{displayDateOnly(String(item.currentDoj || ""))}</time><small>{String(item.joiningStatus || "Awaiting Confirmation")}</small>
+        </button>)}</div>
+      </section>}
     </div>
   );
 }
@@ -110,6 +127,11 @@ function DashboardList({ id, title, items, empty, render }: { id: string; title:
 
 function formatDateTime(value: string) {
   return formatDisplayDateTime(value);
+}
+
+function displayDateOnly(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString() : value;
 }
 
 const hero: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap", marginBottom: 16 };

@@ -21,6 +21,7 @@ import {
   isFirebaseClientConfigured,
 } from "@/lib/firebaseClient";
 import type { AppUser } from "@/lib/types";
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 
 type AuthState = {
   firebaseUser: User | null;
@@ -137,11 +138,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const apiFetch = useCallback(
     async (path: string, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      if (token) headers.set("Authorization", `Bearer ${token}`);
-      if (actingAsRef.current) headers.set("X-ATS-Act-As", actingAsRef.current);
-      else headers.delete("X-ATS-Act-As");
-      return fetch(path, { ...init, headers });
+      const user = getClientAuth()?.currentUser || null;
+      return authenticatedFetch(path, init, user, token, actingAsRef.current);
     },
     [token]
   );

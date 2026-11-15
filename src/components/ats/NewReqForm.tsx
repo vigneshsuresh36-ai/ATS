@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { DEPARTMENTS, LOCATIONS } from "@/lib/roles";
+import { DEPARTMENTS } from "@/lib/roles";
+import { departmentOptions, requiresSubDepartment } from "@/lib/requisitionScope";
+import type { OrgSettings, RequisitionAccessScope } from "@/lib/types";
 import { DualRange } from "./DualRange";
 import { cancelBtn, inp, lab, saveBtn, stepBtn } from "./ui";
 
@@ -12,21 +14,49 @@ function employeeCodeCount(value: string) {
 export function NewReqForm({
   raisedBy,
   allowedDepartments,
+  officeLocations = [],
+  businessUnits = [],
+  organization,
+  accessScopes,
+  subDepartments = [],
+  departmentRequired = true,
+  businessUnitRequired = false,
+  apiFetch,
   onClose,
   onSave,
 }: {
   raisedBy: string;
   allowedDepartments: string[];
+  officeLocations?: { name: string; city?: string }[];
+  businessUnits?: string[];
+  organization?: OrgSettings | null;
+  accessScopes?: RequisitionAccessScope[];
+  subDepartments?: { department: string; name: string }[];
+  departmentRequired?: boolean;
+  businessUnitRequired?: boolean;
+  apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
   onClose: () => void;
   onSave: (body: Record<string, unknown>) => Promise<void>;
 }) {
-  const depts = allowedDepartments.length ? allowedDepartments : [...DEPARTMENTS];
+
   const [title, setTitle] = useState("");
-  const [department, setDepartment] = useState<string>(depts[0]);
+  const [department, setDepartment] = useState<string>("");
+  const [subDepartment, setSubDepartment] = useState("");
+  const [businessUnit, setBusinessUnit] = useState("");
+  const units = accessScopes ? businessUnits.filter((unit) => accessScopes.some((scope) => scope.businessUnit === unit)) : businessUnits;
+  const unitScopes = accessScopes?.filter((scope) => scope.businessUnit === businessUnit);
+  const orgDepartments = organization && businessUnit ? departmentOptions(organization, businessUnit) : [...DEPARTMENTS, ...allowedDepartments];
+  const depts = allowedDepartments.filter((name) => orgDepartments.includes(name) && (!unitScopes || unitScopes.some((scope) => scope.department === name)));
+  const departmentScopes = unitScopes?.filter((scope) => scope.department === department);
+  const specificTeams = departmentScopes?.length && departmentScopes.every((scope) => scope.subDepartment);
+  const subRequired = requiresSubDepartment(department, { businessUnits }) || !!specificTeams;
+  const teams = subDepartments.filter((item) => item.department === department && (!specificTeams || departmentScopes?.some((scope) => scope.subDepartment === item.name)));
   const [requisitionType, setRequisitionType] = useState<"" | "New" | "Replacement">("");
   const [businessJustification, setBusinessJustification] = useState("");
   const [replacementEmployeeCode, setReplacementEmployeeCode] = useState("");
   const [locations, setLocations] = useState<string[]>([]);
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationFocused, setLocationFocused] = useState(false);
   const [employment, setEmployment] = useState("Full-time");
   const [expLo, setExpLo] = useState(2);
   const [expHi, setExpHi] = useState(5);
@@ -36,8 +66,23 @@ export function NewReqForm({
   const [joinHi, setJoinHi] = useState(30);
   const [openings, setOpenings] = useState(1);
   const [notes, setNotes] = useState("");
-  const [jdFile, setJdFile] = useState<File | null>(null);
+  const [jdText, setJdText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  async function draftJobDescription() {
+    if (!title.trim() && !notes.trim() && !jdText.trim()) { setAiError("Add a title or describe the role first."); return; }
+    setAiBusy(true); setAiError("");
+    try {
+      const question = `Draft a job description from these details. Title: ${title}; Department: ${department}; Location: ${locations.join(", ")}; Employment: ${employment}; Experience: ${expLo}-${expHi} years; Notes: ${notes}; Existing description: ${jdText}`.slice(0, 2000);
+      const response = await apiFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "job-draft", question }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not draft the job description.");
+      setJdText(result.answer);
+    } catch (error) { setAiError(error instanceof Error ? error.message : "Could not draft the job description."); }
+    finally { setAiBusy(false); }
+  }
 
   function toggleLocation(city: string) {
     setLocations((prev) =>
@@ -45,33 +90,29 @@ export function NewReqForm({
     );
   }
 
-  async function fileToBase64(file: File): Promise<string> {
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
-    return btoa(binary);
-  }
+  const locationMatches = locationQuery.trim()
+    ? officeLocations
+        .filter((office) =>
+          `${office.name} ${office.city || ""}`
+            .toLowerCase()
+            .includes(locationQuery.trim().toLowerCase())
+        )
+        .slice(0, 3)
+    : [];
 
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>New requisition</h3>
       <div style={{ fontSize: 12, color: "#777", marginBottom: 12 }}>
-        Goes automatically to the Department Head(s) for the selected
-        department — no email to enter. Recruiting unlocks after they approve.
+        Requests go to the selected department’s Department Head for approval. Requests without a department go to Admins.
       </div>
       <label style={lab}>Title *</label>
       <input style={inp} value={title} onChange={(e) => setTitle(e.target.value)} />
-      <label style={lab}>Department *</label>
-      <select
-        style={inp}
-        value={department}
-        onChange={(e) => setDepartment(e.target.value)}
-      >
-        {depts.map((d) => (
-          <option key={d}>{d}</option>
-        ))}
-      </select>
+      <label style={lab}>Business unit {businessUnitRequired ? "*" : "(optional)"}</label>
+      <select style={inp} required={businessUnitRequired} value={businessUnit} onChange={(event) => { setBusinessUnit(event.target.value); setDepartment(""); setSubDepartment(""); }}><option value="">Select business unit</option>{units.map((unit) => <option key={unit}>{unit}</option>)}</select>
+      <label style={lab}>Department {departmentRequired || businessUnitRequired ? "*" : "(optional)"}</label>
+      <select style={inp} required={departmentRequired || businessUnitRequired} disabled={businessUnitRequired && !businessUnit} value={department} onChange={(event) => { setDepartment(event.target.value); setSubDepartment(""); }}><option value="">Select department</option>{depts.map((name) => <option key={name}>{name}</option>)}</select>
+      {department && (teams.length > 0 || subRequired) && <><label style={lab}>Sub-department {subRequired ? "*" : "(optional)"}</label><select style={inp} required={subRequired} value={subDepartment} onChange={(event) => setSubDepartment(event.target.value)}><option value="">Select sub-department</option>{teams.map(({ name }) => <option key={name}>{name}</option>)}</select></>}
       <label style={lab}>Requisition type *</label>
       <select
         style={inp}
@@ -81,7 +122,7 @@ export function NewReqForm({
           setRequisitionType(value);
           if (value !== "New") setBusinessJustification("");
           if (value !== "Replacement") setReplacementEmployeeCode("");
-          if (value === "Replacement") setOpenings(1);
+          if (value !== "New") setOpenings(1);
         }}
       >
         <option value="">Select type</option>
@@ -117,43 +158,15 @@ export function NewReqForm({
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <div>
-          <label style={lab}>Location *</label>
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              padding: "8px 10px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}
-          >
-            {LOCATIONS.map((city) => (
-              <label
-                key={city}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={locations.includes(city)}
-                  onChange={() => toggleLocation(city)}
-                />
-                {city}
-              </label>
-            ))}
+          <label style={lab} htmlFor="req-location-search">Location *</label>
+          <div style={{ position: "relative" }}>
+            <input id="req-location-search" style={inp} value={locationQuery} placeholder="Search office name or city" autoComplete="off" onChange={(event) => setLocationQuery(event.target.value)} onFocus={() => setLocationFocused(true)} onBlur={(event) => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setLocationFocused(false); }} />
+            {locationFocused && locationQuery.trim() && <div className="ats-location-suggestions" style={{ position: "absolute", zIndex: 5, top: "100%", left: 0, right: 0, maxHeight: 200, overflowY: "auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8 }}>
+              {locationMatches.map((office) => { const label = office.city ? `${office.name} · ${office.city}` : office.name; return <button key={JSON.stringify([office.name, office.city])} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!locations.includes(label)) toggleLocation(label); setLocationQuery(""); setLocationFocused(false); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "#fff", border: 0, cursor: "pointer" }}><strong>{office.name}</strong>{office.city && <span style={{ color: "#666" }}> · {office.city}</span>}{locations.includes(label) && <span> ✓</span>}</button>; })}
+              {locationMatches.length === 0 && <div style={{ padding: 12, color: "#666", fontSize: 12 }}>{officeLocations.length ? "No matching locations." : "Ask your Admin to add office locations in Settings → Company Profile."}</div>}
+            </div>}
           </div>
-          {locations.length > 0 && (
-            <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-              Selected: {locations.join(", ")}
-            </div>
-          )}
+          {locations.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>{locations.map((location) => <button key={location} type="button" onClick={() => toggleLocation(location)} aria-label={`Remove ${location}`} style={{ border: "1px solid #ddd", borderRadius: 6, background: "#f4f4f3", padding: "5px 8px", cursor: "pointer" }}>{location} ×</button>)}</div>}
         </div>
         <div>
           <label style={lab}>Employment</label>
@@ -205,15 +218,16 @@ export function NewReqForm({
       />
       <label style={lab}>Openings</label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button type="button" onClick={() => setOpenings((n) => Math.max(1, n - 1))} style={stepBtn}>
+        <button type="button" disabled={!requisitionType || openings <= 1} aria-label="Decrease openings" onClick={() => setOpenings((n) => Math.max(1, n - 1))} style={stepBtn}>
           −
         </button>
         <b>{openings}</b>
         <button
           type="button"
           disabled={
-            requisitionType === "Replacement" &&
+            !requisitionType || (requisitionType === "Replacement" &&
             openings >= Math.max(1, employeeCodeCount(replacementEmployeeCode))
+            )
           }
           onClick={() =>
             setOpenings((n) =>
@@ -223,10 +237,12 @@ export function NewReqForm({
             )
           }
           style={stepBtn}
+          aria-label="Increase openings"
         >
           +
         </button>
       </div>
+      {!requisitionType && <small style={{ color: "#777" }}>Select a requisition type to change the number of openings.</small>}
       <label style={lab}>Raised by</label>
       <div
         style={{
@@ -246,28 +262,18 @@ export function NewReqForm({
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Optional notes for approvers / recruiters"
       />
-      <label style={lab}>JD (PDF) *</label>
-      <input
-        type="file"
+      <label style={lab}>Job description *</label>
+      <button type="button" className="ats-draft-ai-button" style={cancelBtn} disabled={aiBusy} onClick={() => void draftJobDescription()}>{aiBusy ? "Drafting…" : "✦ Draft with AI"}</button>
+      <small style={{ display: "block", color: "#666", marginTop: 5 }}>Review and edit the draft before submitting. Generating replaces the text below.</small>
+      {aiError && <p role="alert">{aiError}</p>}
+      <textarea
         required
-        accept="application/pdf,.pdf"
-        style={{ ...inp, padding: 8 }}
-        onChange={(e) => {
-          const f = e.target.files?.[0] || null;
-          if (f && f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
-            alert("Please upload a PDF file.");
-            e.target.value = "";
-            setJdFile(null);
-            return;
-          }
-          setJdFile(f);
-        }}
+        maxLength={20000}
+        style={{ ...inp, minHeight: 180 }}
+        value={jdText}
+        onChange={(event) => setJdText(event.target.value)}
+        placeholder="Describe the role, responsibilities, qualifications, and experience required."
       />
-      {jdFile && (
-        <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
-          Attached: {jdFile.name} ({Math.round(jdFile.size / 1024)} KB)
-        </div>
-      )}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
         <button onClick={onClose} style={cancelBtn}>
           Cancel
@@ -275,6 +281,8 @@ export function NewReqForm({
         <button
           disabled={busy}
           onClick={async () => {
+            if (departmentRequired && !department) { alert("Select a department."); return; }
+            if (businessUnitRequired && !businessUnit) { alert("Select a business unit."); return; }
             if (!requisitionType) {
               alert("Select whether this is a new or replacement requisition.");
               return;
@@ -298,8 +306,8 @@ export function NewReqForm({
               alert("Select at least one location.");
               return;
             }
-            if (!jdFile) {
-              alert("Upload the JD PDF before submitting.");
+            if (!jdText.trim()) {
+              alert("Enter the job description before submitting.");
               return;
             }
             const salaryFrom = Number(salLo);
@@ -310,15 +318,11 @@ export function NewReqForm({
             }
             setBusy(true);
             try {
-              let jdBase64: string | undefined;
-              let jdFileName: string | undefined;
-              if (jdFile) {
-                jdBase64 = await fileToBase64(jdFile);
-                jdFileName = jdFile.name;
-              }
               await onSave({
                 title,
                 department,
+                subDepartment,
+                lob: businessUnit,
                 requisitionType,
                 businessJustification: businessJustification.trim() || undefined,
                 replacementEmployeeCode: replacementEmployeeCode.trim() || undefined,
@@ -331,9 +335,7 @@ export function NewReqForm({
                 priority: `${joinLo}-${joinHi} days`,
                 openings,
                 notes,
-                jdText: notes,
-                jdBase64,
-                jdFileName,
+                jdText: jdText.trim(),
               });
             } finally {
               setBusy(false);

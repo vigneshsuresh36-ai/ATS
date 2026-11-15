@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { JobDescriptionSection } from "./JobDescriptionSection";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { DEFAULT_INTERVIEW_ROUNDS, getInterviewRounds } from "@/lib/interviewPlan";
 import { formatSalaryRange } from "@/lib/salaryFormat";
 import { canRecruit } from "@/lib/roles";
+import { openRejectionEmailDraft } from "@/lib/rejectionEmail";
+import { signalHoneyBadgerMood } from "@/lib/honeyBadgerMood";
+import { canEditRequisitionPriority, isRequisitionClosed, isRequisitionOpenForRecruiting } from "@/lib/requisitionStatus";
+import { joiningCountdownLabel, joiningTimeline } from "@/lib/joiningTimeline";
+import { ActivityHistory } from "./ActivityHistory";
+import { CallCandidate } from "./CallCandidate";
+import { recruiterCollaborators } from "@/lib/recruiterAssignment";
+import { RoleHiringBrief } from "./RoleHiringBrief";
+import { RoleSummaryEditor } from "./RoleSummaryEditor";
 import {
   Chip,
   DetailItem,
   prettyStatus,
   statusColor,
-  tdCell,
-  saveBtn,
   inp,
   lab,
   stepBtn,
@@ -21,30 +29,33 @@ import type {
   Candidate,
   Interview,
   InterviewPlan,
+  OrgSettings,
   Requisition,
   Role,
 } from "@/lib/types";
+import type { CvComparisonItem } from "@/lib/cvComparison";
+
+type CvMatchResult = { id: string; cvPath: string; requisitionJdText: string; stale?: boolean; status: "ready" | "unavailable"; message: string; score?: number; items?: CvComparisonItem[] };
 
 function getNextSchedulableRound(
   candidate: Candidate,
   interviews: Interview[],
-  configuredRounds: number
+  rounds: InterviewPlan["rounds"]
 ): number | null {
-  if (!configuredRounds) return null;
-  const maxScheduledRound = interviews
+  const bookedRounds = new Set(interviews
     .filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled")
-    .reduce((max, interview) => Math.max(max, interview.roundIndex || 1), 0);
-
-  if (candidate.stage === "HMApproved" && maxScheduledRound === 0) return 1;
+    .map((interview) => interview.roundIndex || 1));
+  const maxScheduledRound = Math.max(0, ...bookedRounds);
+  const nextRound = rounds.find((round) => !bookedRounds.has(round.order))?.order ?? null;
+  if (candidate.stage === "HMApproved" && maxScheduledRound === 0) return nextRound;
 
   const lastAdvancedRound = candidate.lastAdvancedRound ?? 0;
   if (
     candidate.stage === "Selected" &&
     lastAdvancedRound > 0 &&
-    lastAdvancedRound === maxScheduledRound &&
-    lastAdvancedRound < configuredRounds
+    lastAdvancedRound === maxScheduledRound
   ) {
-    return lastAdvancedRound + 1;
+    return nextRound;
   }
 
   return null;
@@ -52,9 +63,11 @@ function getNextSchedulableRound(
 
 export function PipelinePanel({
   req,
+  initialDetailsPage = false,
   candidates,
   interviews,
   plan,
+  org,
   recruiters = [],
   role,
   profileEmail,
@@ -66,9 +79,11 @@ export function PipelinePanel({
   onScheduleCandidate,
 }: {
   req: Requisition;
+  initialDetailsPage?: boolean;
   candidates: Candidate[];
   interviews: Interview[];
   plan: InterviewPlan | null;
+  org: OrgSettings | null;
   recruiters?: AppUser[];
   role: Role;
   profileEmail?: string;
@@ -79,8 +94,62 @@ export function PipelinePanel({
   onAddCandidate?: () => void;
   onScheduleCandidate?: (candidateId: string, roundIndex: number) => void;
 }) {
+  const [assignedCollaborators, setAssignedCollaborators] = useState(req.recruiterCollaboratorEmails || []);
+  const collaboratorsChanged = recruiterCollaborators(assignedCollaborators).join(",") !== recruiterCollaborators(req.recruiterCollaboratorEmails).join(",");
   const [assignedRecruiter, setAssignedRecruiter] = useState(req.recruiterEmail || "");
+    const [assignedPriorityLevel, setAssignedPriorityLevel] = useState(req.priorityLevel || "P4");
+  const [detailsPage, setDetailsPage] = useState(initialDetailsPage);
+  const [candidateSearch, setCandidateSearch] = useState("");
+  const [cvMatches, setCvMatches] = useState<Record<string, CvMatchResult>>({});
+  const [cvMatchBusy, setCvMatchBusy] = useState(false);
+  const [cvMatchesLoading, setCvMatchesLoading] = useState(true);
+  const [cvMatchError, setCvMatchError] = useState("");
+  const [expandedCvMatch, setExpandedCvMatch] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCvMatchesLoading(true);
+    setCvMatches({});
+    apiFetch(`/api/requisitions/${encodeURIComponent(req.id)}/cv-comparisons`).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load saved CV comparisons.");
+      if (!cancelled) setCvMatches(Object.fromEntries((data.results as CvMatchResult[]).map((result) => [result.id, result])));
+    }).catch((error) => { if (!cancelled) setCvMatchError(error instanceof Error ? error.message : "Could not load saved CV comparisons."); })
+      .finally(() => { if (!cancelled) setCvMatchesLoading(false); });
+    return () => { cancelled = true; };
+  }, [apiFetch, req.id]);
+    const [candidateStageFilter, setCandidateStageFilter] = useState("");
+    const [candidatePage, setCandidatePage] = useState(1);
+    const [briefOpen, setBriefOpen] = useState(false);
   const [assignmentBusy, setAssignmentBusy] = useState(false);
+  const [socialLink, setSocialLink] = useState("");
+  const [socialLinkBusy, setSocialLinkBusy] = useState(false);
+  const [socialLinkCopied, setSocialLinkCopied] = useState(false);
+  const [socialLinkError, setSocialLinkError] = useState("");
+  const [careersBusy, setCareersBusy] = useState(false);
+  const [careersError, setCareersError] = useState("");
+  const [socialCvReviewId, setSocialCvReviewId] = useState<string | null>(null);
+  const [summaryEditing, setSummaryEditing] = useState(false);
+  useEffect(() => {
+    const selector = ".ats-pipeline-row-actions[open]";
+    function closeMenus(event: MouseEvent) {
+      document.querySelectorAll<HTMLDetailsElement>(selector).forEach((menu) => {
+        if (!menu.contains(event.target as Node) || (event.target instanceof Element && event.target.closest("button"))) menu.open = false;
+      });
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      document.querySelectorAll<HTMLDetailsElement>(selector).forEach((menu) => {
+        menu.open = false;
+        menu.querySelector<HTMLElement>("summary")?.focus();
+      });
+    }
+    document.addEventListener("click", closeMenus);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("click", closeMenus);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, []);
   const canAdd =
     (role === "Admin" || canRecruit(role)) &&
     (req.status === "Approved" ||
@@ -91,19 +160,48 @@ export function PipelinePanel({
     role === "HiringManager" &&
     !!profileEmail &&
     req.raisedByEmail === profileEmail.toLowerCase();
-  const canHmDecide = role === "Admin" || canRecruit(role) || isHmOwner;
 
   useEffect(() => {
     setAssignedRecruiter(req.recruiterEmail || "");
-  }, [req.id, req.recruiterEmail]);
+    setAssignedCollaborators(req.recruiterCollaboratorEmails || []);
+    setAssignedPriorityLevel(req.priorityLevel || "P4");
+  }, [req.id, req.recruiterEmail, req.recruiterCollaboratorEmails, req.priorityLevel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSocialLink("");
+    if (
+      (role !== "Admin" && role !== "Recruiter") ||
+      !["Approved", "Position Reopened", "Partially Fulfilled"].includes(req.status)
+    ) return;
+    apiFetch(`/api/requisitions/${req.id}/social-link`)
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!cancelled && data?.token) {
+          setSocialLink(new URL(`/apply/${data.token}`, window.location.origin).toString());
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [apiFetch, req.id, req.recruiterEmail, req.status, role]);
 
   async function assignRecruiter() {
+    const currentRecruiter = (req.recruiterEmail || "").trim().toLowerCase();
+    const reasonRequired = !!currentRecruiter && assignedRecruiter.trim().toLowerCase() !== currentRecruiter;
+    const reason = reasonRequired ? window.prompt("Reason for changing recruiter ownership:")?.trim() : undefined;
+    if (reasonRequired && !reason) return;
+    if (reason && reason.length > 500) { alert("Use a reason of up to 500 characters."); return; }
     setAssignmentBusy(true);
     try {
       const response = await apiFetch(`/api/requisitions/${req.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recruiterEmail: assignedRecruiter }),
+        body: JSON.stringify({
+          recruiterEmail: assignedRecruiter,
+          recruiterCollaboratorEmails: assignedRecruiter ? assignedCollaborators : [],
+          reason,
+          ...(canEditRequisitionPriority(req.status) ? { priorityLevel: assignedPriorityLevel } : {}),
+        }),
       });
       const result = await response.json();
       if (!response.ok) alert(result.error || "Could not assign recruiter.");
@@ -112,123 +210,100 @@ export function PipelinePanel({
       setAssignmentBusy(false);
     }
   }
+
+  async function createSocialLink() {
+    setSocialLinkBusy(true);
+    setSocialLinkError("");
+    try {
+      const response = await apiFetch(`/api/requisitions/${req.id}/social-link`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        setSocialLinkError(data.error || "Could not create the social application link.");
+        return;
+      }
+      const link = new URL(`/apply/${data.token}`, window.location.origin).toString();
+      setSocialLink(link);
+      await copySocialLink(link);
+    } catch {
+      setSocialLinkError("Could not create the social application link.");
+    } finally {
+      setSocialLinkBusy(false);
+    }
+  }
+
+  async function copySocialLink(link = socialLink) {
+    try {
+      await navigator.clipboard.writeText(link);
+      setSocialLinkError("");
+      setSocialLinkCopied(true);
+      window.setTimeout(() => setSocialLinkCopied(false), 1800);
+    } catch {
+      setSocialLinkError("Clipboard access was unavailable. Select and copy the link instead.");
+    }
+  }
+
+  async function setCareersVisibility(published: boolean) {
+    setCareersBusy(true); setCareersError("");
+    try {
+      const response = await apiFetch(`/api/requisitions/${req.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "setCareersVisibility", published }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not update careers visibility.");
+      onRefresh();
+    } catch (error) { setCareersError(error instanceof Error ? error.message : "Could not update careers visibility."); }
+    finally { setCareersBusy(false); }
+  }
+
   const scheduledInterviewCount = interviews.filter(
     (interview) => interview.status === "Scheduled" || interview.status === "Rescheduled"
   ).length;
-  const rescheduleRequestCount = interviews.filter(
-    (interview) => interview.status === "Reschedule Requested"
-  ).length;
-
-  const processSteps = [
-    {
-      key: "raised",
-      label: "Raised",
-      done: true,
-      detail: req.createdAt
-        ? formatDateTime(req.createdAt)
-        : undefined,
-    },
-    {
-      key: "approval",
-      label: "Dept head approval",
-      done:
-        req.status === "Approved" ||
-        req.status === "Position Reopened" ||
-        req.status === "Partially Fulfilled" ||
-        req.status === "Rejected" ||
-        req.status === "Closed" ||
-        req.status === "Position Closed",
-      active: req.status === "PendingApproval",
-      detail:
-        req.status === "PendingApproval"
-          ? "Waiting…"
-          : req.approvedAt
-            ? `${req.status === "Rejected" ? "Rejected" : "Approved"} ${formatDate(req.approvedAt)}\nby ${req.approvedByName || "Approver"}`
-            : req.status,
-    },
-    {
-      key: "recruit",
-      label: "Recruiting",
-      done:
-        req.status === "Approved" ||
-        req.status === "Position Reopened" ||
-        req.status === "Partially Fulfilled" ||
-        req.status === "Closed" ||
-        req.status === "Position Closed",
-      active:
-        (req.status === "Approved" ||
-          req.status === "Position Reopened" ||
-          req.status === "Partially Fulfilled") &&
-        candidates.length === 0,
-      detail:
-        req.status === "Approved"
-          ? `${candidates.length} candidate(s)`
-          : req.status === "PendingApproval"
-            ? "Locked until approved"
-            : undefined,
-    },
-    {
-      key: "hm",
-      label: "HM candidate approval",
-      done: candidates.some((c) => c.stage === "HMApproved" || c.stage === "Interview Scheduled" || c.stage === "Interview"),
-      active: candidates.some((c) => c.stage === "PendingHMApproval"),
-      detail: `${candidates.filter((c) => c.stage === "PendingHMApproval").length} pending`,
-    },
-    {
-      key: "interview",
-      label: "Interviews",
-      done: interviews.some((i) => i.status === "Completed"),
-      active:
-        (req.status === "Approved" ||
-          req.status === "Position Reopened" ||
-          req.status === "Partially Fulfilled") &&
-        scheduledInterviewCount > 0,
-      detail: `${scheduledInterviewCount} scheduled${rescheduleRequestCount ? ` · ${rescheduleRequestCount} reschedule requested` : ""}`,
-    },
-    {
-      key: "offer",
-      label: "Offer approval",
-      done: candidates.some((c) => c.stage === "OfferApproved"),
-      active: candidates.some((c) => c.stage === "OfferApprovalPending"),
-      detail: `${candidates.filter((c) => c.stage === "OfferApprovalPending").length} pending`,
-    },
-    {
-      key: "close",
-      label: "Closed / hired",
-      done:
-        req.status === "Closed" ||
-        req.status === "Position Closed" ||
-        req.status === "Position Fulfilled",
-      active: false,
-      detail:
-        candidates.filter((c) => c.stage === "Onboarded" || c.stage === "Offered")
-          .length > 0
-          ? `${candidates.filter((c) => c.stage === "Onboarded" || c.stage === "Offered").length} offered/onboarded`
-          : undefined,
-    },
+  const filledPositions = req.status === "Position Fulfilled"
+    ? req.openings
+    : Math.min(req.openings, candidates.filter((candidate) => candidate.stage === "Onboarded").length);
+  const currentProcessStep = req.status === "PendingApproval"
+    ? 1
+    : req.status === "Position Fulfilled" || req.status === "Position Closed" || req.status === "Closed"
+      ? 4
+      : interviews.length > 0
+        ? 3
+        : 2;
+  const processDetails = [
+    { key: "request", label: "Request", detail: `Submitted${req.createdAt ? ` · ${formatDateTime(req.createdAt)}` : ""}` },
+    { key: "approval", label: "Approval", detail: req.status === "PendingApproval" ? "Waiting for approval" : req.approvedAt ? `Approved ${formatDate(req.approvedAt)}${req.approvedByName ? ` by ${req.approvedByName}` : ""}` : prettyStatus(req.status) },
+    { key: "recruiting", label: "Recruiting", detail: candidates.length ? `${candidates.length} candidates` : "In progress" },
+    { key: "interviews", label: "Interviews", detail: `${scheduledInterviewCount} scheduled` },
+    { key: "filled", label: "Filled", detail: `${filledPositions} of ${req.openings} hires` },
   ];
+  const processSteps = processDetails.map((step, index) => ({
+    ...step,
+    progress: index < currentProcessStep ? "done" : index === currentProcessStep ? "current" : "upcoming",
+  }));
+  const candidateStages = [...new Set(candidates.map((candidate) => candidate.stage))];
+  const filteredCandidates = candidates.filter((candidate) =>
+    (!candidateSearch.trim() || `${candidate.name} ${candidate.email} ${candidate.candidateId || ""} ${candidate.stage}`.toLowerCase().includes(candidateSearch.trim().toLowerCase())) &&
+    (!candidateStageFilter || candidate.stage === candidateStageFilter)
+  );
+  const candidatePageSize = 20;
+  const candidatePageCount = Math.max(1, Math.ceil(filteredCandidates.length / candidatePageSize));
+  const currentCandidatePage = Math.min(candidatePage, candidatePageCount);
+  const visibleCandidates = filteredCandidates.slice((currentCandidatePage - 1) * candidatePageSize, currentCandidatePage * candidatePageSize);
+  const firstCandidate = filteredCandidates.length ? (currentCandidatePage - 1) * candidatePageSize + 1 : 0;
+  const lastCandidate = Math.min(currentCandidatePage * candidatePageSize, filteredCandidates.length);
+  const requestStatusLabel = req.status === "Approved" ? "Open" : prettyStatus(req.status);
+  const joiningTarget = joiningTimeline(req);
 
-  const stageOrder = [
-    "PendingHMApproval",
-    "HMApproved",
-    "New",
-    "Screened",
-    "Shortlist",
-    "Interview",
-    "Interview Scheduled",
-    "Debrief",
-    "Selected",
-    "OfferApprovalPending",
-    "OfferApproved",
-    "Offered",
-    "Onboarded",
-    "On Hold",
-    "Rejected",
-    "Candidate Backed Out",
-  ];
-  const byStage: Record<string, number> = {};
-  for (const c of candidates) {
-    byStage[c.stage] = (byStage[c.stage] || 0) + 1;
+  async function compareVisibleCvs() {
+    if (!visibleCandidates.length || cvMatchBusy) return;
+    setCvMatchBusy(true); setCvMatchError("");
+    try {
+      for (let index = 0; index < visibleCandidates.length; index += 4) {
+        const response = await apiFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "role-cv-comparison", requisitionId: req.id, candidateIds: visibleCandidates.slice(index, index + 4).map((candidate) => candidate.id) }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not compare all CVs. Results completed so far are shown.");
+        if (!Array.isArray(data.results) || typeof data.requisitionJdText !== "string") throw new Error("The comparison returned an incomplete result. Results completed so far are shown.");
+        setCvMatches((current) => ({ ...current, ...Object.fromEntries((data.results as CvMatchResult[]).map((result) => [result.id, { ...result, requisitionJdText: data.requisitionJdText }])) }));
+      }
+    } catch (error) { setCvMatchError(error instanceof Error ? error.message : "Could not compare CVs."); }
+    finally { setCvMatchBusy(false); }
   }
 
   async function hmDecide(
@@ -248,45 +323,111 @@ export function PipelinePanel({
     });
     const d = await r.json();
     if (!r.ok) alert(d.error);
-    else onRefresh();
+    else {
+      if (action === "hmReject") {
+        signalHoneyBadgerMood("sad");
+        const candidate = candidates.find((item) => item.id === candidateId);
+        if (candidate) {
+          openRejectionEmailDraft({
+            candidateEmail: candidate.email,
+            candidateName: candidate.name,
+            requisitionTitle: req.title,
+            rejectionReason: reason,
+            org,
+          });
+        }
+      }
+      onRefresh();
+    }
+  }
+
+  async function reviewSocialCv(candidate: Candidate, stage: "PendingHMApproval" | "Social CV Reject" | "Rejected") {
+    setSocialCvReviewId(candidate.id);
+    try {
+      const response = await apiFetch(`/api/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stage", stage }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Could not review this CV.");
+        return;
+      }
+      if (stage === "Social CV Reject" || stage === "Rejected") {
+        signalHoneyBadgerMood("sad");
+        openRejectionEmailDraft({
+          candidateEmail: candidate.email,
+          candidateName: candidate.name,
+          requisitionTitle: req.title,
+          rejectionReason: "Not selected after Social CV review",
+          org,
+        });
+      }
+      onRefresh();
+    } finally {
+      setSocialCvReviewId(null);
+    }
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: 8 }}>
-        <a onClick={onClose} style={{ cursor: "pointer", color: "#3a6ea5" }}>
-          ← Back to requisitions
-        </a>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "flex-start",
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 12, color: "#888" }}>{req.id}</div>
-          <h3 style={{ margin: "2px 0 8px", fontSize: 22 }}>{req.title}</h3>
-          <Chip color={statusColor(req.status)}>{prettyStatus(req.status)}</Chip>
+    <div className="ats-pipeline-panel">
+      {detailsPage ? <nav className="ats-role-details-breadcrumb" aria-label="Breadcrumb"><button type="button" className="ats-pipeline-back" onClick={() => setDetailsPage(false)}><span aria-hidden="true">←</span> Hiring Requests</button><span aria-hidden="true">/</span><span aria-current="page">Role details</span></nav> : <>
+      <div className="ats-compact-top"><button type="button" className="ats-pipeline-back" onClick={onClose} aria-label="All hiring requests" title="All hiring requests">
+        <span aria-hidden="true">←</span>
+      </button>
+      <header className="ats-pipeline-header">
+        <div className="ats-pipeline-title">
+          <h1>{req.title}</h1>
+          <div className="ats-pipeline-title-meta">
+            <Chip color={statusColor(req.status)}>{requestStatusLabel}</Chip>
+            <span className="ats-compact-id">{req.id}</span>
+            <span>{req.department}</span>
+            <span>{(req.location || "").split(",").filter((city) => city.trim()).length > 1 ? "Multiple Positions" : req.location || "Location not set"}</span>
+            <span>Created {formatDate(req.createdAt)}</span>
+            {joiningTarget && <span className={`ats-joining-target is-${joiningTarget.status}`} data-due-today={joiningTarget.remainingDays === 0 ? "" : undefined} title={`Joining target: ${joiningTarget.targetDays} days after approval`}>{joiningCountdownLabel(joiningTarget.remainingDays)} · {formatDate(joiningTarget.deadline)}</span>}
+          </div>
         </div>
-      </div>
+        <div className="ats-pipeline-actions">
+          <button type="button" className="ats-pipeline-action" onClick={() => { setSummaryEditing(false); setDetailsPage(true); }}>Role details</button>
+          {(role === "Admin" || canRecruit(role)) && ["Approved", "Position Reopened", "Partially Fulfilled"].includes(req.status) && <button type="button" className="ats-pipeline-action" disabled={socialLinkBusy} onClick={() => void (socialLink ? copySocialLink() : createSocialLink())}>{socialLinkBusy ? "Preparing…" : socialLinkCopied ? "Copied!" : "Social Link"}</button>}
+          {canAdd && onAddCandidate && <button type="button" className="ats-pipeline-action is-primary ats-add-candidate-action" onClick={onAddCandidate}><span aria-hidden="true">＋</span> Add candidate</button>}
+        </div>
+      </header></div>
+      {socialLinkError && <p className="ats-social-link-error" role="alert">{socialLinkError}{socialLink && <> <input aria-label="Social application link" value={socialLink} readOnly onFocus={(event) => event.currentTarget.select()} /></>}</p>}
 
+      <div className="ats-compact-process"><div id="ats-hiring-process" className="ats-pipeline-process-heading"><h4>Hiring process</h4></div>
+      <div className="ats-pipeline-process" style={{ display: "flex", gap: 0, marginBottom: 18, overflowX: "auto", paddingBottom: 4 }}>
+        {processSteps.map((step, i) => (
+          <div key={step.key} className={`ats-pipeline-step is-${step.progress}`} title={step.detail} aria-label={`${step.label}: ${step.detail}`} style={{ flex: "1 1 100px", minWidth: 100, padding: "10px 12px", borderRadius: 6, marginRight: i < processSteps.length - 1 ? 6 : 0 }} aria-current={step.progress === "current" ? "step" : undefined}>
+            <span className="ats-process-number" aria-hidden="true">{step.progress === "done" ? "✓" : i + 1}</span>
+            <div className="ats-process-copy"><strong>{step.label}</strong>{step.detail && <small>{step.detail}</small>}</div>
+          </div>
+        ))}
+      </div></div>
+      </>}
+      {detailsPage && <header className="ats-details-page-heading"><div className="ats-role-details-title"><h1>{req.title}</h1><span className={req.status === "Approved" ? "ats-role-details-status is-open" : "ats-role-details-status"}>{requestStatusLabel}</span></div><p>{[req.department, req.location].filter(Boolean).join(" · ")}</p></header>}
+      {detailsPage ? (
+      <div className="ats-position-view ats-role-details-layout">
+      <div className="ats-detail-summary-grid">
+      <section id="ats-role-summary" className="ats-detail-role-card"><div className="ats-pipeline-section-head"><h4>Role summary</h4>{!summaryEditing && !isRequisitionClosed(req.status) && (role === "Admin" || canRecruit(role) || (isHmOwner && req.status === "PendingApproval")) && <button type="button" className="ats-pipeline-action is-primary" onClick={() => setSummaryEditing(true)}>Edit</button>}</div>
+      {summaryEditing ? <RoleSummaryEditor req={req} apiFetch={apiFetch} officeLocations={org?.officeLocations} onCancel={() => setSummaryEditing(false)} onSaved={onRefresh} /> : <>
       <div
+        className="ats-pipeline-overview"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
           gap: 10,
           margin: "16px 0",
           padding: 14,
-          background: "#f7f5ef",
+          background: "#f6f6f6",
           borderRadius: 12,
-          border: "1px solid #ebe6da",
+          border: "1px solid #ddd",
         }}
       >
-        <DetailItem label="Department" value={req.department} />
+        <DetailItem label="Department" value={req.department || "Not specified"} />
+        {req.subDepartment && <DetailItem label="Sub-department" value={req.subDepartment} />}
+        <DetailItem label="Business unit" value={req.lob || "Not specified"} />
         <DetailItem label="Location" value={req.location || "—"} />
         <DetailItem label="Employment" value={req.employment || "—"} />
         <DetailItem label="Experience" value={req.level || "—"} />
@@ -294,11 +435,12 @@ export function PipelinePanel({
           label="Salary"
           value={formatSalaryRange(req.salaryMin, req.salaryMax)}
         />
-        <DetailItem label="Joining" value={req.priority || "—"} />
+        {!joiningTarget && <DetailItem label="Joining timeline" value={req.priority || "—"} />}
         <DetailItem label="Openings" value={String(req.openings)} />
         <DetailItem label="Hiring manager" value={`${req.raisedByName}`} />
+        {role !== "DepartmentHead" && role !== "HiringManager" && !isRequisitionClosed(req.status) && req.status !== "PendingApproval" && req.status !== "Rejected" && <div className="ats-pipeline-priority-detail"><span>Priority</span><strong>{["P1", "P2", "P3", "P4"].includes(req.priorityLevel || "") ? req.priorityLevel : "Not set"}</strong></div>}
         {req.jdFileName && req.jdPath && (
-          <div>
+          <div id="ats-pipeline-jd-file">
             <div
               style={{
                 fontSize: 10,
@@ -335,7 +477,7 @@ export function PipelinePanel({
                 padding: 0,
                 border: 0,
                 background: "transparent",
-                color: "#3a6ea5",
+                color: "#333",
                 fontWeight: 650,
                 fontSize: 13.5,
                 cursor: "pointer",
@@ -348,387 +490,158 @@ export function PipelinePanel({
           </div>
         )}
       </div>
-
-      {req.notes && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 650, color: "#555" }}>Notes</div>
-          <div
-            style={{
-              fontSize: 13,
-              marginTop: 4,
-              whiteSpace: "pre-wrap",
-              color: "#333",
-            }}
-          >
-            {req.notes}
+      {joiningTarget && (
+        <div className="ats-role-fulfillment">
+          <div className="ats-role-fulfillment-fields">
+            <DetailItem label="Approved on" value={formatDate(joiningTarget.approvalDate)} />
+            <DetailItem label="Joining timeline" value={req.priority} />
+            <DetailItem label="Fulfillment cutoff" value={formatDate(joiningTarget.deadline)} />
+            <div className="ats-role-fulfillment-countdown">
+              <div>Time remaining</div>
+              <span className={"ats-joining-target is-" + joiningTarget.status} data-due-today={joiningTarget.remainingDays === 0 ? "" : undefined}>{joiningCountdownLabel(joiningTarget.remainingDays)}</span>
+            </div>
           </div>
+          <p>Cutoff is based on {joiningTarget.targetDays} calendar {joiningTarget.targetDays === 1 ? "day" : "days"} from approval.</p>
         </div>
       )}
+      </>}
 
-      {role === "Admin" && (
-        <div style={{ display: "flex", alignItems: "end", gap: 8, marginBottom: 14, maxWidth: 520 }}>
-          <div style={{ flex: 1 }}>
-            <label style={lab}>Assigned recruiter</label>
+      </section>
+
+      </div>
+      <div className="ats-role-details-main">
+      {(req.jdText || ((role === "Admin" || role === "Recruiter") && !isRequisitionClosed(req.status))) && (
+        <JobDescriptionSection
+          key={req.id} req={req} role={role} apiFetch={apiFetch} onRefresh={onRefresh}
+          previewActions={(role === "Admin" || role === "Recruiter") && isRequisitionOpenForRecruiting(req.status) && <>
+            {req.careersPublished || socialLink ? (
+              <button type="button" className="ats-jd-button ats-jd-primary" disabled={careersBusy} onClick={() => void setCareersVisibility(!req.careersPublished)}>
+                {careersBusy ? "Saving…" : req.careersPublished ? "Remove careers listing" : "List on careers page"}
+              </button>
+            ) : (
+              <button type="button" className="ats-jd-button" disabled={socialLinkBusy} onClick={() => void createSocialLink()}>
+                {socialLinkBusy ? "Preparing…" : "Generate application link"}
+              </button>
+            )}
+            {careersError && <span className="ats-jd-action-error" role="alert">{careersError}</span>}
+          </>}
+        />
+      )}
+      {req.notes && <section className="ats-role-notes" aria-labelledby="ats-role-notes-heading"><h4 id="ats-role-notes-heading">Notes</h4><p>{req.notes}</p></section>}
+      {interviews.length > 0 && <details className="ats-position-additional-interviews"><summary>Interviews ({interviews.length})</summary><div>{interviews.map((interview) => <p key={interview.id}>{formatDateTime(interview.datetime)}{interview.roundName ? ` · Round ${interview.roundIndex}: ${interview.roundName}` : ` · ${interview.stage}`} · {interview.status}{interview.interviewerEmails?.length ? ` · ${interview.interviewerEmails.join(", ")}` : ""}{interview.meetLink ? <> · <a href={interview.meetLink} target="_blank" rel="noreferrer">Meet</a></> : null}</p>)}</div></details>}
+      <div className="ats-role-details-history">
+      <ActivityHistory path={`/api/requisitions/${encodeURIComponent(req.id)}?activity=1`} apiFetch={apiFetch} />
+      </div>
+      </div>
+      <section className="ats-role-details-side" aria-label="Recruiter assignment and interview rounds">
+      {role === "Admin" && !isRequisitionClosed(req.status) && (
+        <div className="ats-pipeline-assignment">
+          <h3>Recruiter assignment</h3>
+          <div>
+            <label style={lab}>Primary recruiter</label>
             <select style={inp} value={assignedRecruiter} onChange={(event) => setAssignedRecruiter(event.target.value)}>
               <option value="">Unassigned</option>
-              {recruiters.map((recruiter) => <option key={recruiter.email} value={recruiter.email}>{recruiter.name} · {recruiter.email}</option>)}
+              {recruiters.map((recruiter) => <option key={recruiter.email} value={recruiter.email}>{recruiter.name}</option>)}
             </select>
           </div>
-          <button type="button" style={saveBtn} disabled={assignmentBusy || assignedRecruiter === (req.recruiterEmail || "")} onClick={assignRecruiter}>
-            {assignmentBusy ? "Saving…" : "Assign"}
+          <fieldset className="ats-role-collaborators">
+            <legend>Collaborators</legend>
+            {!assignedRecruiter && <small>Choose a primary recruiter first.</small>}
+            {[...recruiters, ...assignedCollaborators.filter((email) => !recruiters.some((recruiter) => recruiter.email === email)).map((email) => ({ email, name: email, active: false }))].filter((recruiter) => recruiter.email !== assignedRecruiter && (recruiter.active || assignedCollaborators.includes(recruiter.email))).map((recruiter) => (
+              <label key={recruiter.email} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" disabled={!assignedRecruiter || assignmentBusy} checked={assignedCollaborators.includes(recruiter.email)} onChange={(event) => {
+                  const checked = event.target.checked;
+                  setAssignedCollaborators((current) => checked ? [...current, recruiter.email] : current.filter((email) => email !== recruiter.email));
+                }} />
+                {recruiter.name}
+              </label>
+            ))}
+          </fieldset>
+          {canEditRequisitionPriority(req.status) && <div>
+            <label style={lab}>Priority</label>
+            <select style={inp} value={assignedPriorityLevel} onChange={(event) => setAssignedPriorityLevel(event.target.value)}>
+              {["P1", "P2", "P3", "P4"].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+            </select>
+          </div>}
+          <button type="button" className="ats-role-details-save" disabled={assignmentBusy || (assignedRecruiter === (req.recruiterEmail || "") && !collaboratorsChanged && (!canEditRequisitionPriority(req.status) || assignedPriorityLevel === (req.priorityLevel || "P4")))} onClick={assignRecruiter}>
+            {assignmentBusy ? "Saving…" : "Save assignment"}
           </button>
         </div>
       )}
+      {socialLinkError && <p className="ats-social-link-error" role="alert">{socialLinkError}</p>}
+      {canRecruit(role) && ["Approved", "Position Reopened", "Partially Fulfilled"].includes(req.status) && <InterviewRoundsEditor reqId={req.id} apiFetch={apiFetch} onSaved={onRefresh} />}
 
-      <h4 style={{ marginBottom: 8 }}>Process</h4>
-      <div
-        style={{
-          display: "flex",
-          gap: 0,
-          marginBottom: 18,
-          overflowX: "auto",
-          paddingBottom: 4,
-        }}
-      >
-        {processSteps.map((step, i) => (
-          <div
-            key={step.key}
-            style={{
-              flex: "1 1 100px",
-              minWidth: 100,
-              padding: "10px 12px",
-              borderRadius: 10,
-              marginRight: i < processSteps.length - 1 ? 6 : 0,
-              background: step.done
-                ? "#eef7f0"
-                : step.active
-                  ? "#fff7ec"
-                  : "#f4f2ec",
-              border: `1px solid ${
-                step.done ? "#c5e0cc" : step.active ? "#f0d9b0" : "#e7e2d5"
-              }`,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: 0.3,
-                color: step.done
-                  ? "#2f6f4f"
-                  : step.active
-                    ? "#8a5a00"
-                    : "#888",
-              }}
-            >
-              {i + 1}. {step.label}
-            </div>
-            {step.detail && (
-              <div style={{ fontSize: 12, lineHeight: 1.35, marginTop: 4, color: "#555", whiteSpace: "pre-line", overflowWrap: "anywhere", minWidth: 0 }}>
-                {step.detail}
-              </div>
-            )}
-          </div>
-        ))}
+
+      </section>
+
       </div>
+      ) : (
+      <div id="ats-candidates-view" className="ats-candidates-view">
 
       {req.status === "PendingApproval" && (
         <div
+          className="ats-pipeline-notice"
           style={{
-            background: "#fff7ec",
-            border: "1px solid #f0d9b0",
-            borderRadius: 10,
             padding: 12,
             marginBottom: 12,
-            color: "#8a5a00",
             fontSize: 13,
           }}
         >
-          Waiting for department-head approval. Recruiting is locked until
+          Waiting for {req.department ? "department-head" : "Admin"} approval. Recruiting is locked until
           approved.
         </div>
       )}
 
-      {canRecruit(role) &&
-        (req.status === "Approved" ||
-          req.status === "Position Reopened" ||
-          req.status === "Partially Fulfilled") && (
-        <InterviewRoundsEditor
-          reqId={req.id}
-          apiFetch={apiFetch}
-          onSaved={onRefresh}
-        />
-      )}
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          marginBottom: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <h4 style={{ margin: 0 }}>
-          Pipeline ({candidates.length} candidate
-          {candidates.length === 1 ? "" : "s"})
-        </h4>
-        {canAdd && onAddCandidate && (
-          <button type="button" onClick={onAddCandidate} style={saveBtn}>
-            + Add candidate
-          </button>
-        )}
+      <div id="ats-pipeline-candidates" className="ats-candidate-pipeline-heading">
+        <div className="ats-candidate-pipeline-title"><h2>Candidate pipeline</h2><span>{candidates.length} candidates</span></div>
+        <div className="ats-candidate-pipeline-controls">
+          {(role === "Admin" || role === "Recruiter" || role === "HiringManager" || role === "DepartmentHead") && <button type="button" className="ats-cv-compare-button" aria-expanded={briefOpen} onClick={() => setBriefOpen((open) => !open)}>✦ AI brief</button>}
+          <button type="button" className="ats-cv-compare-button" disabled={cvMatchBusy || cvMatchesLoading || visibleCandidates.length === 0} onClick={() => void compareVisibleCvs()}>{cvMatchBusy ? "Comparing…" : cvMatchesLoading ? "Loading…" : "✦ Compare CVs"}</button>
+          <input aria-label="Search candidates" type="search" value={candidateSearch} onChange={(event) => { setCandidateSearch(event.target.value); setCandidatePage(1); }} placeholder="Search candidates" />
+          <label className="ats-candidate-filter"><select aria-label="Filter candidates by stage" value={candidateStageFilter} onChange={(event) => { setCandidateStageFilter(event.target.value); setCandidatePage(1); }}><option value="">Filter</option>{candidateStages.map((stage) => <option key={stage} value={stage}>{prettyStatus(stage)}</option>)}</select></label>
+        </div>
       </div>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 6,
-          marginBottom: 12,
-        }}
-      >
-        {stageOrder
-          .filter((s) => byStage[s])
-          .map((s) => (
-            <span
-              key={s}
-              style={{
-                fontSize: 12,
-                background: "#eef3f8",
-                border: "1px solid #d6e2ee",
-                borderRadius: 999,
-                padding: "4px 10px",
-                color: "#3a6ea5",
-                fontWeight: 600,
-              }}
-            >
-              {prettyStatus(s)}: {byStage[s]}
-            </span>
-          ))}
-        {candidates.length === 0 && (
-          <span style={{ fontSize: 13, color: "#aaa" }}>
-            No candidates yet.
-          </span>
-        )}
-      </div>
+      {briefOpen && <RoleHiringBrief key={req.id} requisitionId={req.id} apiFetch={apiFetch} />}
+      {cvMatchError && <p className="ats-cv-match-error" role="alert">{cvMatchError}</p>}
+      {candidates.length > 0 && <p className="ats-cv-match-hint">Compare CVs reviews the candidates on this page. Scores show the share of identified job requirements with verified CV evidence; review the evidence before deciding.</p>}
+      {candidates.length === 0 && <div className="ats-pipeline-empty-illustration"><img src="/candidate-empty-state.png" alt="" width={240} height={160} /><strong>No candidates yet</strong><p>Candidates added to this position will appear here.</p>{canAdd && onAddCandidate && <button type="button" className="ats-pipeline-action" onClick={onAddCandidate}>＋ Add candidate</button>}</div>}
 
       {candidates.length > 0 && (
-        <div
-          style={{
-            border: "1px solid #ebe6da",
-            borderRadius: 12,
-            overflowX: "auto",
-            marginBottom: 12,
-          }}
-        >
-          <table
-            className="ats-table ats-pipeline-table"
-            style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
-          >
-            <thead>
-              <tr style={{ background: "#f7f5ef", textAlign: "left" }}>
-                {[
-                  "Name",
-                  "Email",
-                  "Phone",
-                  "Fixed CTC",
-                  "Variable CTC",
-                  "Expected",
-                  "Notice",
-                  "Stage",
-                  "CV",
-                  ...(canHmDecide ? ["Action"] : []),
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className={h === "Action" ? "actions" : undefined}
-                    style={{
-                      padding: "9px 11px",
-                      fontSize: 11,
-                      textTransform: "uppercase",
-                      color: "#6b6b63",
-                      borderBottom: "1px solid #ebe6da",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((c) => {
-                const schedulableRound = getNextSchedulableRound(
-                  c,
-                  interviews,
-                  interviewRounds.length
-                );
-                return (
-                <tr key={c.id}>
-                  <td
-                    style={{ ...tdCell, cursor: "pointer" }}
-                    onClick={() => onCand(c.id)}
-                  >
-                    <b>{c.name}</b>
-                  </td>
-                  <td style={tdCell}>{c.email || "—"}</td>
-                  <td style={tdCell}>{c.phone || "—"}</td>
-                  <td style={tdCell}>{c.currentFixedCtc || c.currentCtc || "—"}</td>
-                  <td style={tdCell}>{c.currentVariableCtc || "—"}</td>
-                  <td style={tdCell}>{c.expectedCtc || "—"}</td>
-                  <td style={tdCell}>{c.notice || "—"}</td>
-                  <td style={tdCell}>
-                    <Chip color={statusColor(c.stage)}>
-                      {prettyStatus(c.stage)}
-                    </Chip>
-                  </td>
-                  <td style={tdCell} onClick={(e) => e.stopPropagation()}>
-                    {c.cvFileName && c.cvPath ? (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const res = await apiFetch(
-                            `/api/candidates/${c.id}/cv`
-                          );
-                          if (!res.ok) {
-                            const d = await res.json().catch(() => ({}));
-                            alert(d.error || "Could not download CV.");
-                            return;
-                          }
-                          const blob = await res.blob();
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = c.cvFileName || "cv.pdf";
-                          document.body.appendChild(a);
-                          a.click();
-                          a.remove();
-                          URL.revokeObjectURL(url);
-                        }}
-                        style={{
-                          padding: 0,
-                          border: 0,
-                          background: "transparent",
-                          color: "#3a6ea5",
-                          fontSize: 13,
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                        }}
-                      >
-                        {c.cvFileName}
-                      </button>
-                    ) : (
-                      c.cvFileName || "—"
-                    )}
-                  </td>
-                  {canHmDecide && (
-                    <td className="actions" style={{ ...tdCell, position: "sticky", right: 0, zIndex: 2 }} onClick={(e) => e.stopPropagation()}>
-                      {c.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") ? (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            type="button"
-                            className="ats-btn-approve"
-                            onClick={() => hmDecide(c.id, "hmApprove")}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            className="ats-btn-reject"
-                            onClick={() => hmDecide(c.id, "hmReject")}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      ) : c.stage === "PendingHMApproval" ? (
-                        <span style={{ fontSize: 12, color: "#888" }}>Awaiting HM approval</span>
-                      ) : canRecruit(role) &&
-                        onScheduleCandidate &&
-                        schedulableRound !== null ? (
-                        <button
-                          type="button"
-                          style={saveBtn}
-                          onClick={() => onScheduleCandidate(c.id, schedulableRound)}
-                        >
-                          Schedule interview · Round {schedulableRound}
-                        </button>
-                      ) : c.stage === "Selected" &&
-                        canRecruit(role) &&
-                        interviewRounds.length <= (c.lastAdvancedRound || 0) &&
-                        !interviews.some(
-                          (interview) =>
-                            interview.candidateId === c.id &&
-                            interview.feedbackPending
-                        ) ? (
-                        <button
-                          type="button"
-                          className="ats-btn-approve"
-                          onClick={() => onCand(c.id)}
-                        >
-                          Offer stage
-                        </button>
-                      ) : canRecruit(role) &&
-                        interviews.some(
-                          (interview) =>
-                            interview.candidateId === c.id &&
-                            interview.status !== "Cancelled"
-                        ) ? (
-                        <button
-                          type="button"
-                          className="ats-link-btn"
-                          onClick={() => onCand(c.id)}
-                        >
-                          Add feedback
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: 12, color: "#888" }}>—</span>
-                      )}
-                    </td>
-                  )}
-                </tr>
-                );
-              })}
-            </tbody>
+        <div className="ats-pipeline-candidate-table">
+          <table className="ats-table ats-pipeline-table">
+            <thead><tr><th>Candidate</th><th>Current status</th><th>Interviews</th><th>Experience</th><th>CV / JD match</th><th>Expected salary</th><th>Notice</th><th>Actions</th></tr></thead>
+            <tbody>{visibleCandidates.map((candidate) => {
+              const schedulableRound = getNextSchedulableRound(candidate, interviews, interviewRounds);
+              const candidateInterviewCount = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Rescheduled").length;
+              const feedbackPending = interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending && interview.status !== "Cancelled" && interview.status !== "Rescheduled");
+              const result = cvMatches[candidate.id];
+              const stale = !!result && (result.stale === true || result.requisitionJdText !== (req.jdText || "") || result.cvPath !== (candidate.cvPath || ""));
+              const expanded = expandedCvMatch === candidate.id;
+              return <Fragment key={candidate.id}><tr className="ats-pipeline-candidate-row" onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, select, textarea")) onCand(candidate.id); }}>
+                <td><button type="button" className="ats-pipeline-candidate-person" onClick={() => onCand(candidate.id)}><span className="ats-pipeline-candidate-avatar">{candidate.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><span><strong>{candidate.name}</strong><small>{candidate.email || "No email provided"}</small>{candidate.candidateId && <small className="ats-candidate-id-subtle">{candidate.candidateId}</small>}</span></button></td>
+                <td><span className={`ats-pipeline-stage-pill ${["Rejected", "Social CV Reject", "Candidate Backed Out"].includes(candidate.stage) ? "is-rejected" : ["HMApproved", "Selected", "OfferApproved", "Offered", "Onboarded"].includes(candidate.stage) ? "is-approved" : ["PendingHMApproval", "OfferApprovalPending", "On Hold"].includes(candidate.stage) ? "is-review" : candidate.stage === "New" ? "is-new" : "is-progress"}`}>{prettyStatus(candidate.stage)}</span></td>
+                <td>{candidateInterviewCount}</td>
+                <td>{candidate.experienceYears != null ? `${candidate.experienceYears} years` : "—"}</td>
+                <td>{!result ? <span className="ats-cv-match-pending">Not reviewed</span> : stale ? <span className="ats-cv-match-pending">Needs refresh</span> : result.status !== "ready" ? <span className="ats-cv-match-unavailable"><span className="ats-cv-match-pending">Not reviewed</span><small>{result.message}</small></span> : <button type="button" className="ats-cv-match-score" aria-expanded={expanded} onClick={() => setExpandedCvMatch(expanded ? null : candidate.id)}><strong>{result.score}% match</strong><small>AI estimate · {expanded ? "Hide evidence" : "View evidence"}</small></button>}</td>
+                <td>{candidate.expectedCtc || "—"}</td>
+                <td>{candidate.notice || "—"}</td>
+                <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions">
+                  {(candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && canRecruit(role) && <><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, "PendingHMApproval")}>{socialCvReviewId === candidate.id ? "Saving…" : "Select CV"}</button><button type="button" disabled={socialCvReviewId === candidate.id} onClick={() => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject")}>Reject CV</button></>}
+                  {candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") && <><button type="button" data-hm-decision="approve" onClick={() => void hmDecide(candidate.id, "hmApprove")}>Approve</button><button type="button" data-hm-decision="reject" onClick={() => void hmDecide(candidate.id, "hmReject")}>Reject</button></>}
+                  {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" />}
+                  {canRecruit(role) && onScheduleCandidate && schedulableRound !== null && <button type="button" onClick={() => onScheduleCandidate(candidate.id, schedulableRound)}>Schedule interview · Round {schedulableRound}</button>}
+                  {candidate.stage === "Selected" && canRecruit(role) && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending) && <button type="button" onClick={() => onCand(candidate.id)}>Offer stage</button>}
+                  {canRecruit(role) && feedbackPending && <button type="button" onClick={() => onCand(candidate.id)}>Add feedback</button>}
+                </div></td>
+              </tr>{expanded && result?.status === "ready" && !stale && <tr className="ats-cv-evidence-row"><td colSpan={8}><section className="ats-cv-evidence" aria-label={`CV match evidence for ${candidate.name}`}><div className="ats-cv-evidence-heading"><strong>CV / JD match evidence</strong><span>AI can miss details. Review the CV before deciding.</span></div><div className="ats-cv-evidence-list">{result.items?.map((item, index) => <div key={index}><span>{item.requirement}</span><span>{item.evidence}</span><b>{item.found ? "Found in CV" : "Not verified"}</b></div>)}</div><small>{result.message}. The percentage is the number of requirements with verified evidence divided by the requirements identified by AI; it is not a hiring recommendation.</small></section></td></tr>}</Fragment>;
+            })}</tbody>
           </table>
         </div>
       )}
+      {candidates.length > 0 && visibleCandidates.length === 0 && <p className="ats-candidates-empty">No candidates match this search.</p>}
+      {filteredCandidates.length > candidatePageSize && <nav className="ats-pipeline-pagination" aria-label="Candidate pages"><span>Showing {firstCandidate}–{lastCandidate} of {filteredCandidates.length} candidates</span><div><button type="button" aria-label="Previous page" disabled={currentCandidatePage <= 1} onClick={() => setCandidatePage(currentCandidatePage - 1)}>‹</button><span>Page {currentCandidatePage} of {candidatePageCount}</span><button type="button" aria-label="Next page" disabled={currentCandidatePage >= candidatePageCount} onClick={() => setCandidatePage(currentCandidatePage + 1)}>›</button></div></nav>}
 
-      {interviews.length > 0 && (
-        <>
-          <h4 style={{ marginBottom: 8 }}>Interviews</h4>
-          <div style={{ marginBottom: 12 }}>
-            {interviews.map((iv) => (
-              <div
-                key={iv.id}
-                style={{
-                  fontSize: 13,
-                  padding: "8px 0",
-                  borderBottom: "1px solid #f0ece3",
-                }}
-              >
-                {formatDateTime(iv.datetime)}
-                {iv.roundName
-                  ? ` · Round ${iv.roundIndex}: ${iv.roundName}`
-                  : ` · ${iv.stage}`}{" "}
-                · <Chip color={statusColor(iv.status)}>{iv.status}{iv.rescheduleRequestedBy ? ` · ${iv.rescheduleRequestedBy}` : ""}</Chip>
-                {iv.interviewerEmails?.length
-                  ? ` · ${iv.interviewerEmails.join(", ")}`
-                  : ""}
-                {iv.meetLink && (
-                  <>
-                    {" "}
-                    ·{" "}
-                    <a href={iv.meetLink} target="_blank" rel="noreferrer">
-                      Meet
-                    </a>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        </>
+      </div>
       )}
     </div>
   );
@@ -743,15 +656,17 @@ function InterviewRoundsEditor({
   apiFetch: (p: string, i?: RequestInit) => Promise<Response>;
   onSaved: () => void;
 }) {
-  const [rounds, setRounds] = useState<{ name: string; order: number }[]>([
+  const [rounds, setRounds] = useState<InterviewPlan["rounds"]>([
     ...DEFAULT_INTERVIEW_ROUNDS.map(({ name, order }) => ({ name, order })),
   ]);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [forms, setForms] = useState<import("@/lib/types").FeedbackFormTemplate[]>([]);
   const [configured, setConfigured] = useState(false);
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
+    apiFetch("/api/org").then((r) => r.json()).then((d) => setForms(d.org?.feedbackFormTemplates || [])).catch(() => setForms([]));
     apiFetch(`/api/requisitions/${reqId}/plan`)
       .then((r) => r.json())
       .then((d) => {
@@ -761,6 +676,10 @@ function InterviewRoundsEditor({
             plan.rounds.map((r, i) => ({
               name: r.name,
               order: r.order || i + 1,
+              feedbackFormId: r.feedbackFormId,
+              applicable: r.applicable,
+              type: r.type,
+              competencies: r.competencies,
             }))
           );
           setConfigured(true);
@@ -787,7 +706,10 @@ function InterviewRoundsEditor({
           rounds: rounds.map((x, i) => ({
             name: x.name,
             order: i + 1,
-            type: "interview",
+            type: x.type || "interview",
+            competencies: x.competencies || [],
+            applicable: x.applicable !== false,
+            feedbackFormId: x.feedbackFormId || "",
           })),
         }),
       });
@@ -807,6 +729,7 @@ function InterviewRoundsEditor({
 
   return (
     <div
+      id="ats-interview-rounds" className="ats-pipeline-rounds"
       style={{
         border: "1px solid #ebe6da",
         borderRadius: 12,
@@ -824,41 +747,30 @@ function InterviewRoundsEditor({
           marginBottom: configured && !editing ? 8 : 6,
         }}
       >
-        <h4 style={{ margin: 0 }}>Interview rounds</h4>
+        <h4 style={{ margin: 0 }}>Applicable interview rounds</h4>
         {!editing && (
           <button
             type="button"
+            className="ats-pipeline-action is-primary"
             onClick={() => setEditing(true)}
-            style={{
-              border: "1px solid #d9d3c5",
-              background: "#fff",
-              borderRadius: 8,
-              padding: "6px 10px",
-              fontSize: 13,
-              cursor: "pointer",
-            }}
           >
-            Edit
+            Edit rounds
           </button>
         )}
       </div>
 
       {!editing ? (
         <>
-          <ol
-            style={{
-              margin: 0,
-              paddingLeft: 18,
-              fontSize: 13.5,
-              lineHeight: 1.6,
-            }}
-          >
-            {rounds.map((round) => (
-              <li key={round.order}>
-                <b>Round {round.order}</b> — {round.name}
-              </li>
-            ))}
-          </ol>
+          <table className="ats-role-round-table">
+            <thead><tr><th scope="col">#</th><th scope="col">Interview round</th><th scope="col">Feedback type</th></tr></thead>
+            <tbody>{rounds.map((round) => (
+              <tr key={round.order}>
+                <td>{round.order}</td>
+                <td>{round.name.replace(/^Round \d+\s+[—–-]\s+/, "")}</td>
+                <td>{round.applicable === false ? "Skipped" : round.feedbackFormId ? forms.find((form) => form.id === round.feedbackFormId)?.name || "Form unavailable" : "Standard feedback"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
           {!configured && (
             <p style={{ fontSize: 12, color: "#777", margin: "6px 0 0" }}>
               Round 1 is ready to schedule. Save only when adding or changing rounds.
@@ -869,7 +781,7 @@ function InterviewRoundsEditor({
         <>
           <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
             {configured
-              ? "Update round count or names, then save."
+              ? "Choose which rounds apply to this requisition. Skipped rounds are unavailable for new scheduling."
               : "Round 1 is ready to schedule. Add more rounds here when needed."}
           </p>
           <div
@@ -925,13 +837,26 @@ function InterviewRoundsEditor({
                   )
                 }
               />
+              <button
+                type="button"
+                className="ats-pipeline-action"
+                disabled={busy || (round.applicable !== false && rounds.filter((item) => item.applicable !== false).length === 1)}
+                onClick={() => setRounds((current) => current.map((item, index) =>
+                  index === i ? { ...item, applicable: item.applicable === false } : item
+                ))}
+              >
+                {round.applicable === false ? "Include" : "Skip"} Round {round.order}
+              </button>
+              <label style={lab}>Feedback form (optional)</label>
+              <select style={inp} value={round.feedbackFormId || ""} onChange={(e) => setRounds((rs) => rs.map((x, j) => j === i ? { ...x, feedbackFormId: e.target.value } : x))}><option value="">Standard feedback</option>{round.feedbackFormId && !forms.some((f) => f.id === round.feedbackFormId) && <option value={round.feedbackFormId}>Form unavailable — choose another</option>}{forms.map((form) => <option key={form.id} value={form.id}>{form.name}</option>)}</select>
             </div>
           ))}
+          {rounds.every((round) => round.applicable === false) && <p role="status">Include at least one interview round.</p>}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button
               type="button"
-              style={saveBtn}
-              disabled={busy}
+              className="ats-role-details-save"
+              disabled={busy || rounds.every((round) => round.applicable === false)}
               onClick={save}
             >
               {busy ? "Saving…" : "Save rounds"}

@@ -1,3 +1,5 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { errResponse, json, requireUser } from "@/lib/auth";
 import { listCandidates, listRequisitions, listUsers } from "@/lib/db";
@@ -24,7 +26,7 @@ export async function GET(req: NextRequest) {
       const ids = new Set(reqs.map((r) => r.id));
       cands = cands.filter((c) => ids.has(c.reqId));
     } else if (user.role === "Recruiter") {
-      reqs = reqs.filter((r) => r.recruiterEmail === user.email);
+      reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
       const ids = new Set(reqs.map((r) => r.id));
       cands = cands.filter((c) => ids.has(c.reqId));
     } else if (user.role === "DepartmentHead") {
@@ -44,7 +46,7 @@ export async function GET(req: NextRequest) {
 
     const candHits = cands
       .filter((c) =>
-        [c.name, c.email, c.phone, c.location, c.stage, c.reqId]
+        [c.candidateId, ...(c.candidateIdAliases || []), c.applicationId, c.name, c.email, c.phone, c.location, c.stage, c.reqId]
           .join(" ")
           .toLowerCase()
           .includes(q)

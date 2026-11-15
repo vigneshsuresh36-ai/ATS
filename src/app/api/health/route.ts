@@ -7,6 +7,6 @@ export async function GET() {
     ok: true,
     firebase: !!getAdminApp(),
     calendarEnabled: isCalendarEnabled(),
-    name: "TalentOS ATS",
+    name: "LT Recruitment Project ATS",
   });
 }

@@ -17,7 +17,7 @@ Internal talent acquisition suite: **Next.js + Firebase**, Google Sign-In on one
 1. Create a Firebase project; enable **Authentication → Google**
 2. Create a web app; copy config into `.env.local` as `NEXT_PUBLIC_FIREBASE_*`
 3. Create a service account; set `FIREBASE_ADMIN_CREDENTIALS_PATH` (local) or `FIREBASE_ADMIN_*` (Vercel)
-4. Add authorized domain in Firebase Auth
+4. Add authorized domain in Firebase Auth and set `BOOTSTRAP_ADMIN_EMAIL` (and optionally `BOOTSTRAP_ADMIN_NAME`) to the customer's initial administrator. This is used only for a new, uninitialized installation; existing users are unchanged.
 5. Run:
 
 ```bash

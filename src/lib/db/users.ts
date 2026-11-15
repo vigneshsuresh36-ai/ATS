@@ -1,6 +1,6 @@
 import { adminAuth, requireAdminDb } from "../firebaseAdmin";
 import type { AppUser, OrgSettings } from "../types";
-import { SEED_USERS } from "../roles";
+import { initialAdministrator } from "../initialAdministrator";
 import { now } from "./ids";
 
 let seedPromise: Promise<void> | null = null;
@@ -10,33 +10,22 @@ export async function ensureSeedUsers() {
   seedPromise = (async () => {
     const db = requireAdminDb();
 
-    // Only bootstrap once — never recreate accounts after you delete them.
-    const usersSnap = await db.collection("users").limit(1).get();
-    if (usersSnap.empty) {
-      for (const u of SEED_USERS) {
-        const email = u.email.toLowerCase();
-        const payload: AppUser = {
-          id: email,
-          email,
-          name: u.name,
-          role: u.role,
-          title: u.title,
-          departments: u.departments || [],
-          active: true,
-          createdAt: now(),
-        };
-        await db.collection("users").doc(email).set(payload);
-      }
-    }
-
     const orgRef = db.collection("org").doc("org");
-    if (!(await orgRef.get()).exists) {
-      await orgRef.set({
-        id: "org",
-        company: "Talent Acquisition",
-        slaDaysDefault: 10,
-      } satisfies OrgSettings);
-    }
+    const bootstrapRef = db.collection("system").doc("bootstrap");
+    await db.runTransaction(async (transaction) => {
+      const [usersSnap, orgSnap, bootstrapSnap] = await Promise.all([
+        transaction.get(db.collection("users").limit(1)),
+        transaction.get(orgRef),
+        transaction.get(bootstrapRef),
+      ]);
+      if (usersSnap.empty) {
+        if (bootstrapSnap.exists || orgSnap.exists) throw new Error("This installation has no team members. Restore an administrator through your deployment support process.");
+        const payload = initialAdministrator(process.env.BOOTSTRAP_ADMIN_EMAIL, process.env.BOOTSTRAP_ADMIN_NAME, now());
+        transaction.create(db.collection("users").doc(payload.email), payload);
+      }
+      if (!bootstrapSnap.exists) transaction.create(bootstrapRef, { initializedAt: now() });
+      if (!orgSnap.exists) transaction.create(orgRef, { id: "org", company: "Talent Acquisition", slaDaysDefault: 10 } satisfies OrgSettings);
+    });
   })().catch((e) => {
     seedPromise = null;
     throw e;
@@ -62,11 +51,11 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
   return snap.exists ? normalizeUser(snap.data() as AppUser) : null;
 }
 
-export async function listUsers(): Promise<AppUser[]> {
+export async function listUsers(includeInactive = false): Promise<AppUser[]> {
   const snap = await requireAdminDb().collection("users").get();
   return snap.docs
     .map((d) => normalizeUser(d.data() as AppUser)!)
-    .filter((u) => u && u.active !== false);
+    .filter((u) => u && (includeInactive || u.active !== false));
 }
 
 export async function upsertUser(
@@ -75,12 +64,14 @@ export async function upsertUser(
   const email = data.email.toLowerCase();
   const user: AppUser = {
     id: email,
+    ...(data.employeeCode?.trim() ? { employeeCode: data.employeeCode.trim() } : {}),
     email,
     name: data.name,
     role: data.role,
     title: data.title || data.role,
     departments: data.departments || [],
-    ...(data.managerEmail ? { managerEmail: data.managerEmail } : {}),
+    ...(data.accessScopes !== undefined ? { accessScopes: data.accessScopes } : {}),
+    managerEmail: data.managerEmail || "",
     active: data.active !== false,
     createdAt: data.createdAt || now(),
   };
@@ -104,6 +95,19 @@ export async function getOrg(): Promise<OrgSettings> {
 export async function saveOrg(patch: Partial<OrgSettings>) {
   await requireAdminDb().collection("org").doc("org").set(patch, { merge: true });
   return getOrg();
+}
+
+export async function setIntegrationRequest(provider: "whatsapp" | "naukri" | "linkedin", requested: boolean) {
+  const db = requireAdminDb();
+  const ref = db.collection("org").doc("org");
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) throw new Error("Organization settings are unavailable.");
+    const org = snapshot.data() as OrgSettings;
+    const integrationRequests = { ...org.integrationRequests, [provider]: requested };
+    transaction.update(ref, { integrationRequests });
+    return { ...org, integrationRequests };
+  });
 }
 
 export async function verifyIdToken(

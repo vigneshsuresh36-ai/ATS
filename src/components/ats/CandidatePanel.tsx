@@ -1,10 +1,18 @@
 "use client";
 
+import { ActivityHistory } from "./ActivityHistory";
+import { normalizeQuestion, validFeedbackAnswer } from "@/lib/feedbackForms";
+import { HiringAssistant } from "./HiringAssistant";
+import { CandidateCommunicationHistory } from "./CandidateCommunicationHistory";
+import { CandidateComments } from "./CandidateComments";
+import { CallCandidate } from "./CallCandidate";
+
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { getInterviewRounds } from "@/lib/interviewPlan";
 import { canRecruit } from "@/lib/roles";
-import { formatSalaryRange } from "@/lib/salaryFormat";
+import { candidateSourceLabel } from "@/lib/candidateSource";
+import { signalHoneyBadgerMood } from "@/lib/honeyBadgerMood";
 import {
   Chip,
   statusColor,
@@ -15,44 +23,107 @@ import {
   cancelBtn,
   DetailItem,
 } from "./ui";
-import type { Candidate, Interview, InterviewPlan, Requisition, Role } from "@/lib/types";
+import { canReopenApplication } from "@/lib/candidateReopening";
+import { isRequisitionOpenForRecruiting } from "@/lib/requisitionStatus";
+import type { Candidate, Interview, InterviewFeedback, InterviewPlan, Requisition, Role } from "@/lib/types";
 
 export function CandidatePanel({
   data,
   role,
+  org,
   isHmOwner,
   onClose,
   apiFetch,
   onRefresh,
+  onOpenApplication,
   onScheduleRound,
 }: {
   data: {
     candidate: Candidate;
     requisition?: Requisition | null;
-    feedback: {
-      rating: number;
-      recommendation: string;
-      interviewer: string;
-      feedback: string;
-      interviewId?: string;
-    }[];
+    feedback: InterviewFeedback[];
     interviews: Interview[];
+    events?: { toStage: string; at: string; note?: string }[];
+    interviewHistory?: {
+      reqId: string;
+      reqTitle: string;
+      roundName: string;
+      datetime: string;
+      status: string;
+      interviewers: string[];
+      feedback: {
+        interviewer: string;
+        rating: number;
+        recommendation: string;
+        feedback: string;
+        createdAt: string;
+      }[];
+    }[];
   };
   role: Role;
+  org?: import("@/lib/types").OrgSettings | null;
   isHmOwner?: boolean;
   onClose: () => void;
   apiFetch: (p: string, i?: RequestInit) => Promise<Response>;
   onRefresh: () => void;
+  onOpenApplication: (applicationRecordId: string) => Promise<void>;
   onScheduleRound?: (roundIndex: number) => void;
 }) {
   const c = data.candidate;
   const requisition = data.requisition;
+  const [cvPreview, setCvPreview] = useState<string | null>(null);
+  const [cvError, setCvError] = useState("");
+  useEffect(() => {
+    let active = true; let url: string | undefined;
+    setCvPreview(null); setCvError("");
+    if (c.cvPath && /\.pdf$/i.test(c.cvFileName || "")) apiFetch(`/api/candidates/${c.id}/cv`).then(async response => {
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || `CV preview request failed (${response.status}).`);
+      }
+      const blob = await response.blob();
+      if (active) { url = URL.createObjectURL(blob); setCvPreview(url); }
+    }).catch((error) => { if (active) setCvError(error instanceof Error ? error.message : "Could not load the CV preview."); });
+    return () => { active = false; if (url) URL.revokeObjectURL(url); };
+  }, [apiFetch, c.id, c.cvPath, c.cvFileName]);
+  const timeline = [
+    ...(data.events || []).map((event) => ({ at: event.at, title: `Status changed to ${prettyStatus(event.toStage)}`, detail: event.note || "" })),
+    ...(data.interviews || []).map((interview) => ({ at: interview.datetime, title: `${interview.roundName || `Round ${interview.roundIndex || 1}`} interview`, detail: interview.status })),
+    ...(data.feedback || []).map((entry) => ({ at: entry.createdAt, title: "Interview feedback submitted", detail: entry.interviewer || "" })),
+    ...(c.offerRequestedAt ? [{ at: c.offerRequestedAt, title: "Offer submitted for approval", detail: "" }] : []),
+    ...(c.offerDecisionAt ? [{ at: c.offerDecisionAt, title: `Offer ${c.offerApprovalStatus || "decision recorded"}`, detail: "" }] : []),
+    ...(c.joiningStatusUpdatedAt ? [{ at: c.joiningStatusUpdatedAt, title: `Joining status: ${c.joiningStatus || "updated"}`, detail: "" }] : []),
+  ].filter((item) => item.at).sort((a, b) => b.at.localeCompare(a.at));
   const [stage, setStage] = useState(c.stage);
   const [fb, setFb] = useState("");
+  const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
   const [feedbackFor, setFeedbackFor] = useState("");
   const [rating, setRating] = useState(3);
   const [rec, setRec] = useState("Yes");
   const [busy, setBusy] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState("");
+  const canReopen = canRecruit(role) && !c.archived && canReopenApplication(c.stage) &&
+    !!requisition && isRequisitionOpenForRecruiting(requisition.status);
+
+  async function reopenApplication() {
+    setReopening(true);
+    setReopenError("");
+    try {
+      const response = await apiFetch("/api/candidates/" + encodeURIComponent(c.id), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reopen" }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.candidate?.id) throw new Error(result.error || "Could not reopen the application.");
+      await onOpenApplication(result.candidate.id);
+    } catch (error) {
+      setReopenError(error instanceof Error ? error.message : "Could not reopen the application.");
+    } finally {
+      setReopening(false);
+    }
+  }
   const [plan, setPlan] = useState<InterviewPlan | null>(null);
   const [tentativeDoj, setTentativeDoj] = useState(c.tentativeDoj || "");
   const [offeredFixedCtc, setOfferedFixedCtc] = useState(c.offeredFixedCtc || c.offeredSalary || "");
@@ -81,6 +152,7 @@ export function CandidatePanel({
 
   const canHmDecide =
     (role === "Admin" || isHmOwner) && c.stage === "PendingHMApproval";
+  const canReviewSocialCv = canRecruit(role) && c.stage === "Social CV";
 
   const activeInterviews = (data.interviews || []).filter(
     (iv) => iv.status !== "Cancelled" && iv.status !== "Reschedule Requested"
@@ -98,12 +170,11 @@ export function CandidatePanel({
     (m, iv) => Math.max(m, iv.roundIndex || 1),
     0
   );
-  const nextRoundIndex = maxScheduledRound + 1;
   const interviewRounds = getInterviewRounds(plan);
-  const configuredRounds = interviewRounds.length;
-  const nextRoundMeta =
-    interviewRounds.find((r) => r.order === nextRoundIndex) ||
-    interviewRounds[nextRoundIndex - 1];
+  const bookedRounds = new Set((data.interviews || []).filter((interview) => interview.status !== "Cancelled").map((interview) => interview.roundIndex || 1));
+  const nextRoundMeta = interviewRounds.find((round) => !bookedRounds.has(round.order));
+  const nextRoundIndex = nextRoundMeta?.order ?? 0;
+  const finalRound = interviewRounds.at(-1)?.order ?? 0;
   const lastAdvanced = c.lastAdvancedRound ?? 0;
   // Next round only after debrief Advance for the latest scheduled round
   // (lastAdvancedRound is the source of truth — not interview status, which may
@@ -111,17 +182,14 @@ export function CandidatePanel({
   const canScheduleNext =
     canRecruit(role) &&
     !!onScheduleRound &&
-    (configuredRounds === 0 || nextRoundIndex <= configuredRounds) &&
-    ((nextRoundIndex === 1 && c.stage === "HMApproved") ||
-      (nextRoundIndex > 1 &&
-        c.stage === "Selected" &&
-        lastAdvanced === maxScheduledRound &&
-        nextRoundIndex === lastAdvanced + 1));
+    nextRoundIndex > 0 &&
+    ((maxScheduledRound === 0 && c.stage === "HMApproved") ||
+      (maxScheduledRound > 0 && c.stage === "Selected" && lastAdvanced === maxScheduledRound));
 
   const interviewRoundsComplete =
-    configuredRounds > 0
-      ? lastAdvanced >= configuredRounds
-      : maxScheduledRound > 0 && lastAdvanced >= maxScheduledRound;
+    Math.max(finalRound, maxScheduledRound) > 0 &&
+    lastAdvanced >= Math.max(finalRound, maxScheduledRound) &&
+    interviewRounds.every((round) => activeInterviews.some((interview) => (interview.roundIndex || 1) === round.order));
 
   // Stage is driven by HM approve → schedule → feedback → debrief.
   // Manual edits only after the interview loop is finished (offer / hire / close).
@@ -135,14 +203,14 @@ export function CandidatePanel({
     c.stage === "Debrief" ||
     (c.stage === "Selected" && !interviewRoundsComplete);
 
-  const showStageEditor =
-    canRecruit(role) &&
-    !inInterviewProcess &&
-    (c.stage === "Selected" ||
-      c.stage === "Offered" ||
-      c.stage === "Onboarded" ||
-      c.stage === "Rejected" ||
-      c.stage === "On Hold");
+  const hasApprovedOffer = c.offerApprovalStatus === "Approved";
+  const showStageEditor = canRecruit(role) && !inInterviewProcess && (
+    (hasApprovedOffer && (c.stage === "OfferApproved" || c.stage === "Offered")) ||
+    (!hasApprovedOffer && c.offerApprovalStatus !== "Pending" && (c.stage === "Selected" || c.stage === "On Hold"))
+  );
+  const stageOptions: Candidate["stage"][] = hasApprovedOffer
+    ? c.stage === "OfferApproved" ? ["OfferApproved", "Offered", "Onboarded"] : ["Offered", "Onboarded"]
+    : ["Selected", "On Hold"];
   const canRequestOffer =
     canRecruit(role) &&
     c.stage === "Selected" &&
@@ -152,12 +220,6 @@ export function CandidatePanel({
   const canDecideOffer =
     (role === "Admin" || role === "DepartmentHead") &&
     c.offerApprovalStatus === "Pending";
-  const canMarkBackOut =
-    canRecruit(role) &&
-    !["Candidate Backed Out", "Rejected", "Onboarded"].includes(c.stage) &&
-    c.offerApprovalStatus !== "Pending" &&
-    c.offerApprovalStatus !== "Approved";
-
   // One feedback entry per scheduled interview — hide form once caught up.
   const pendingInterview =
     activeInterviews.find(
@@ -187,32 +249,49 @@ export function CandidatePanel({
       });
       const d = await r.json();
       if (!r.ok) alert(d.error);
-      else onRefresh();
+      else {
+        if (action === "hmReject") signalHoneyBadgerMood("sad");
+        onRefresh();
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  async function markCandidateBackedOut() {
-    if (!window.confirm(`Mark ${c.name} as backed out and cancel all upcoming interviews?`)) return;
-    const reason = window.prompt("Reason (optional):")?.trim() || "";
+  async function reviewSocialCv(stage: "Social CV Reject" | "PendingHMApproval") {
     setBusy(true);
     try {
       const response = await apiFetch(`/api/candidates/${c.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "candidateBackOut", reason }),
+        body: JSON.stringify({ action: "stage", stage }),
       });
       const result = await response.json();
-      if (!response.ok) alert(result.error || "Could not update candidate.");
+      if (!response.ok) alert(result.error || "Could not update social application.");
       else {
-        if (result.calendarCancellationFailures?.length) {
-          alert("Candidate status was updated, but one or more Calendar events could not be cancelled.");
-        }
+        if (stage === "Social CV Reject") signalHoneyBadgerMood("sad");
         onRefresh();
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openResume() {
+    const tab = window.open("", "_blank");
+    try {
+      const response = await apiFetch(`/api/candidates/${c.id}/cv`);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Could not open resume.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      if (tab) tab.location.href = url;
+      else { URL.revokeObjectURL(url); alert("Allow pop-ups to view the resume."); return; }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      tab?.close();
+      alert(error instanceof Error ? error.message : "Could not open resume.");
     }
   }
 
@@ -226,6 +305,9 @@ export function CandidatePanel({
       alert("Choose a new interview date and time.");
       return;
     }
+    const reason = window.prompt(`Reason for changing this interview to ${status}:`)?.trim();
+    if (!reason) return;
+    if (reason.length > 500) { window.alert("Use a reason of up to 500 characters."); return; }
     setBusy(true);
     try {
       const response = await apiFetch("/api/schedule", {
@@ -234,13 +316,17 @@ export function CandidatePanel({
         body: JSON.stringify({
           id: interviewId,
           status,
+          reason,
           rescheduleRequestedBy: status === "Reschedule Requested" ? requester : undefined,
           datetime: datetime ? new Date(datetime).toISOString() : undefined,
         }),
       });
       const result = await response.json();
       if (!response.ok) alert(result.error || "Could not update interview.");
-      else onRefresh();
+      else {
+        signalHoneyBadgerMood("sad");
+        onRefresh();
+      }
     } finally {
       setBusy(false);
     }
@@ -276,148 +362,84 @@ export function CandidatePanel({
   }
 
   return (
-    <div>
-      <a onClick={onClose} style={{ cursor: "pointer", color: "#3a6ea5" }}>
-        ← Close
-      </a>
-      <h3 style={{ marginTop: 8 }}>{c.name}</h3>
-      <Chip color={statusColor(c.stage)}>{prettyStatus(c.stage)}</Chip>
-      {requisition && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-            gap: 10,
-            margin: "12px 0",
-            padding: 12,
-            background: "#f7f5ef",
-            borderRadius: 12,
-            border: "1px solid #ebe6da",
-          }}
-        >
-          <DetailItem label="Position" value={requisition.title} />
-          <DetailItem label="Department" value={requisition.department} />
-          <DetailItem label="Location" value={requisition.location || "—"} />
-          <DetailItem label="Experience" value={requisition.level || "—"} />
-          <DetailItem label="Salary range" value={formatSalaryRange(requisition.salaryMin, requisition.salaryMax)} />
-          <DetailItem label="Openings" value={String(requisition.openings)} />
-          <DetailItem label="Hiring manager" value={requisition.raisedByName} />
-          <DetailItem label="Requisition ID" value={requisition.id} />
+    <div className="ats-profile ats-profile-redesign">
+      <div className="ats-profile-utility"><div className="ats-profile-breadcrumbs"><button type="button" className="ats-profile-back" onClick={onClose}>← Hiring Requests</button><span>/</span><span>{requisition?.title || "Candidate"}</span><span>/</span><strong>{c.name}</strong></div></div>
+      <header className="ats-profile-header">
+        <div>
+          <h3>{c.name}</h3>
+          <div className="ats-profile-subtitle">Candidate ID <strong>{c.candidateId || "Pending backfill"}</strong></div>
+          <div className="ats-profile-subtitle">{requisition?.title || "Candidate"}<Chip color={statusColor(c.stage)}>{prettyStatus(c.stage)}</Chip></div>
         </div>
-      )}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-          gap: 10,
-          margin: "12px 0",
-          padding: 12,
-          background: "#f7f5ef",
-          borderRadius: 12,
-          border: "1px solid #ebe6da",
-        }}
-      >
-        <DetailItem label="Email" value={c.email || "—"} />
-        <DetailItem label="Phone" value={c.phone || "—"} />
-        <DetailItem label="Location" value={c.location || "—"} />
-        <DetailItem label="Present Fixed CTC" value={c.currentFixedCtc || c.currentCtc || "—"} />
-        <DetailItem label="Present Variable CTC" value={c.currentVariableCtc || "—"} />
-        <DetailItem label="Present ESOPs" value={c.presentEsops || "—"} />
-        <DetailItem label="Expected CTC" value={c.expectedCtc || "—"} />
-        <DetailItem label="Notice" value={c.notice || "—"} />
-        <DetailItem
-          label="Source"
-          value={
-            c.source
-              ? c.sourceDetail
-                ? `${c.source} · ${c.sourceDetail}`
-                : c.source
-              : "—"
-          }
-        />
-        <DetailItem label="Req" value={c.reqId} />
-        {c.cvFileName && (
-          <div style={{ minWidth: 0, maxWidth: "100%" }}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: 0.4,
-                color: "#8a8a82",
-              }}
-            >
-              CV
-            </div>
-            {c.cvPath ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  const res = await apiFetch(`/api/candidates/${c.id}/cv`);
-                  if (!res.ok) {
-                    const d = await res.json().catch(() => ({}));
-                    alert(d.error || "Could not download CV.");
-                    return;
-                  }
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = c.cvFileName || "cv.pdf";
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  URL.revokeObjectURL(url);
-                }}
-                style={{
-                  display: "block",
-                  maxWidth: "100%",
-                  marginTop: 2,
-                  padding: 0,
-                  border: 0,
-                  background: "transparent",
-                  color: "#3a6ea5",
-                  fontSize: 13.5,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textAlign: "left",
-                  textDecoration: "underline",
-                  overflowWrap: "anywhere",
-                  wordBreak: "break-word",
-                }}
-              >
-                {c.cvFileName}
-              </button>
-            ) : (
-              <div style={{ minWidth: 0, maxWidth: "100%", fontSize: 13.5, fontWeight: 600, marginTop: 2, overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                {c.cvFileName}
-              </div>
-            )}
-          </div>
-        )}
-        {c.hmDecisionBy && (
-          <DetailItem label="HM decision by" value={c.hmDecisionBy} />
-        )}
+        <div className="ats-profile-actions">{canReopen && <button type="button" className="ats-btn-approve" disabled={reopening} onClick={() => void reopenApplication()}>{reopening ? "Reopening…" : "Reopen application"}</button>}{c.cvPath && <button type="button" className="ats-profile-resume" onClick={() => void openResume()}>View CV</button>}{canHmDecide && <><button type="button" className="ats-btn-approve" disabled={busy} data-hm-decision="approve" onClick={() => hmDecide("hmApprove")}>Approve</button><button type="button" className="ats-btn-reject" disabled={busy} data-hm-decision="reject" onClick={() => hmDecide("hmReject")}>Reject</button></>}</div>
+      </header>
+      {reopenError && <p role="alert">{reopenError}</p>}
+      {c.previousApplicationRecordId && <button type="button" className="ats-profile-back" onClick={() => void onOpenApplication(c.previousApplicationRecordId!)}>View previous application</button>}
+      <div className="ats-profile-columns">
+        <div>
+          <section className="ats-profile-section ats-profile-details"><header><h4>Candidate details</h4></header><div className="ats-profile-grid">
+            {c.applicationId && <DetailItem label="Application ID" value={c.applicationId} />}<DetailItem label="Email" value={c.email || "—"} /><DetailItem label="Phone" value={c.phone || "—"} /><DetailItem label="Location" value={c.location || "—"} /><DetailItem label="Experience" value={c.experienceYears === undefined ? "—" : `${c.experienceYears} years`} /><DetailItem label="Notice period" value={c.notice ? (/^\d+$/.test(c.notice.trim()) ? `${c.notice} days` : c.notice) : "—"} /><DetailItem label="Source" value={c.source ? `${candidateSourceLabel(c.source) || c.source}${c.sourceDetail ? ` · ${c.sourceDetail}` : ""}` : "—"} /><DetailItem label="Skills" value={c.skills?.length ? c.skills.join(", ") : "Not recorded"} />
+            {c.customFields?.map((field) => <DetailItem key={field.id} label={field.label} value={field.value} />)}
+          </div></section>
+          <section className="ats-profile-section ats-profile-compensation"><header><h4>Compensation</h4></header><div className="ats-profile-grid"><DetailItem label="Fixed" value={c.currentFixedCtc || c.currentCtc || "—"} /><DetailItem label="Variable" value={c.currentVariableCtc || "—"} /><DetailItem label="ESOPs" value={c.presentEsops || "—"} /><DetailItem label="Expected" value={c.expectedCtc || "—"} /></div></section>
+          {c.remarks && <section className="ats-profile-section"><header><h4>Recruiter notes</h4></header><div className="ats-profile-recruiter-notes">{c.remarks}</div></section>}
+
+        </div>
+        <div className="ats-profile-cv-column">
+        <section className="ats-profile-cv-panel">
+          {cvPreview ? <iframe title="Candidate CV" src={`${cvPreview}#navpanes=0&view=FitH`} /> : <div className="ats-profile-cv-empty">{cvError ? `CV preview unavailable: ${cvError}` : !c.cvPath ? "No CV attached." : /\.pdf$/i.test(c.cvFileName || "") ? "Loading CV…" : "Preview is available for PDF files. Use View CV to open this file."}</div>}</section>
+
+
+        </div>
       </div>
+        <section id="ats-profile-activity" className="ats-profile-section ats-profile-tools"><header><h4>Activity &amp; history</h4><p>Screening results, communication history and interview progress.</p></header><div className="ats-profile-tool-list">
+          {(role === "Admin" || role === "Recruiter" || role === "HiringManager") && <details className="premium-candidate-evidence"><summary>AI screening: evidence against role requirements</summary><HiringAssistant key={c.id} apiFetch={apiFetch} mode="candidate" candidateId={c.id} embedded /></details>}
+          {canRecruit(role) && <div className="ats-call-row"><span>Phone: {c.phone || "—"}</span><CallCandidate candidate={c} apiFetch={apiFetch} /></div>}
+          {(role === "Admin" || role === "Recruiter") && <CandidateCommunicationHistory key={c.id} candidateId={c.id} apiFetch={apiFetch} />}
+      <details className="ats-candidate-history">
+        <summary>Candidate timeline ({timeline.length})</summary>
+        {timeline.length ? <div className="ats-candidate-timeline">{timeline.map((item, index) => <div key={`${item.at}-${index}`}><span aria-hidden="true" /><div><strong>{item.title}</strong>{item.detail && <small>{item.detail}</small>}<time>{formatDateTime(item.at, "Date not recorded")}</time></div></div>)}</div> : <p className="ats-candidate-history-empty">No activity recorded yet.</p>}
+      </details>
+      <details className="ats-candidate-history">
+        <summary>Previous interview history ({data.interviewHistory?.length || 0})</summary>
+        {data.interviewHistory?.length ? data.interviewHistory.map((item, index) => (
+          <section className="ats-candidate-history-item" key={`${item.reqId}-${item.datetime}-${index}`}>
+            <div><strong>{item.reqTitle}</strong><span>{formatDateTime(item.datetime, "Date not recorded")}</span></div>
+            <p>{item.roundName} · {item.status}</p>
+            <p><b>Interviewers:</b> {item.interviewers.length ? item.interviewers.join(", ") : "Not recorded"}</p>
+            {item.feedback.map((entry, feedbackIndex) => (
+              <div className="ats-candidate-history-feedback" key={`${entry.createdAt}-${feedbackIndex}`}>
+                <div><b>{entry.interviewer || "Interviewer"}</b><span>{formatDateTime(entry.createdAt, "")}</span>{entry.rating ? <span>Rating {entry.rating}/5</span> : null}</div>
+                {entry.recommendation && <p><b>Recommendation:</b> {entry.recommendation}</p>}
+                {entry.feedback && <p>{entry.feedback}</p>}
+              </div>
+            ))}
+          </section>
+        )) : <p className="ats-candidate-history-empty">No previous interview records.</p>}
+      </details>
+      <CandidateComments key={c.id} candidateId={c.id} apiFetch={apiFetch} />
+            </div></section>
+      {org?.offerJoiningEnabled && (role === "Admin" || role === "Recruiter") && (c.stage === "Offered" || c.stage === "Onboarded" || c.joiningStatus || c.initialDoj || c.currentDoj) && (
+        <section className="ats-candidate-joining-details">
+          <h4>Offer &amp; Joining Details</h4>
+          <div>
+            <DetailItem label="Offer Status" value={c.offerApprovalStatus || c.stage} />
+            <DetailItem label="Offer Released Date" value={formatDateTime(data.events?.filter((event) => event.toStage === "Offered").sort((left, right) => left.at.localeCompare(right.at))[0]?.at || "", "—")} />
+            <DetailItem label="Initial DOJ" value={formatDate(c.initialDoj || c.tentativeDoj, "—")} />
+            <DetailItem label="Current DOJ" value={formatDate(c.currentDoj || c.initialDoj || c.tentativeDoj, "—")} />
+            <DetailItem label="Joining Status" value={c.joiningStatus || (c.stage === "Onboarded" ? "Joined" : "Awaiting Confirmation")} />
+            <DetailItem label="Actual Joining Date" value={formatDate(c.actualJoiningDate, "—")} />
+            <DetailItem label="Remarks" value={c.joiningRemarks || "—"} />
+          </div>
+        </section>
+      )}
       {c.hmRejectReason && (
         <div style={{ fontSize: 13, color: "#9a3b3b", marginBottom: 10 }}>
           Rejected: {c.hmRejectReason}
         </div>
       )}
-      {(canMarkBackOut || (canRecruit(role) && rescheduleEligibleInterviews.length > 0)) && (
+      {canRecruit(role) && rescheduleEligibleInterviews.length > 0 && (
         <div style={{ margin: "10px 0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {canMarkBackOut && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={markCandidateBackedOut}
-              style={{ ...candidateWorkflowButton, background: "#a83f3f" }}
-            >
-              Candidate Backed Out
-            </button>
-          )}
-          {canRecruit(role) && rescheduleEligibleInterviews.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {rescheduleEligibleInterviews.length > 1 && (
                 <select
                   aria-label="Interview to reschedule"
@@ -448,41 +470,16 @@ export function CandidatePanel({
               >
                 Interviewer Requested Reschedule
               </button>
-            </div>
-          )}
+          </div>
         </div>
       )}
-      {c.remarks && (
-        <div style={{ fontSize: 13, marginBottom: 12, whiteSpace: "pre-wrap" }}>
-          <b>Remarks:</b> {c.remarks}
-        </div>
-      )}
-
-      {canHmDecide && (
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 14,
-            flexWrap: "wrap",
-          }}
-        >
-          <button
-            type="button"
-            className="ats-btn-approve"
-            disabled={busy}
-            onClick={() => hmDecide("hmApprove")}
-          >
-            Approve candidate
-          </button>
-          <button
-            type="button"
-            className="ats-btn-reject"
-            disabled={busy}
-            onClick={() => hmDecide("hmReject")}
-          >
-            Reject candidate
-          </button>
+      {canReviewSocialCv && (
+        <div className="ats-social-cv-review">
+          <div><strong>Social CV review</strong><span>Advance this profile to hiring manager approval or reject the social application.</span></div>
+          <div>
+            <button type="button" className="ats-btn-reject" disabled={busy} onClick={() => void reviewSocialCv("Social CV Reject")}>Reject Social CV</button>
+            <button type="button" className="ats-btn-approve" disabled={busy} onClick={() => void reviewSocialCv("PendingHMApproval")}>Move to HM approval</button>
+          </div>
         </div>
       )}
 
@@ -525,10 +522,10 @@ export function CandidatePanel({
             value={stage}
             onChange={(e) => setStage(e.target.value as Candidate["stage"])}
           >
-            {["Selected", "Offered", "Onboarded", "Rejected", "On Hold"].map(
+            {stageOptions.map(
               (s) => (
                 <option key={s} value={s}>
-                  {prettyStatus(s)}
+                  {s === "OfferApproved" ? "Offer Approved" : prettyStatus(s)}
                 </option>
               )
             )}
@@ -706,6 +703,7 @@ export function CandidatePanel({
             {"☆".repeat(Math.max(0, 5 - Math.min(5, f.rating || 0)))}
           </span>
           <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{f.feedback}</div>
+          {f.customAnswers?.map((item, index) => <div key={index} style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><strong>{item.question}</strong><div>{item.answer?.startsWith("[") ? (() => { try { const parsed = JSON.parse(item.answer); return Array.isArray(parsed) ? parsed.join(", ") : item.answer; } catch { return item.answer; } })() : item.answer || "—"}</div></div>)}
         </div>
         );
       })}
@@ -735,6 +733,16 @@ export function CandidatePanel({
               </select>
             </>
           ) : null}
+          {pendingInterview?.feedbackForm?.description && <p style={{ color: "#626078", fontSize: 13, lineHeight: 1.5, margin: "0 0 12px" }}>{pendingInterview.feedbackForm.description}</p>}
+          {(pendingInterview?.feedbackForm?.questions || []).map((rawQuestion, index) => { const q = normalizeQuestion(rawQuestion); const value = customAnswers[index] || ""; const update = (answer: string) => setCustomAnswers((current) => ({ ...current, [index]: answer })); let selected: string[] = []; if (q.type === "checkboxes" && value) { try { selected = JSON.parse(value); } catch { selected = []; } } return <fieldset key={index} style={{ border: "1px solid #e1e6e2", borderRadius: 8, padding: 12, margin: "12px 0" }}><legend style={{ fontSize: 13, fontWeight: 600 }}>{q.label}{q.required ? " *" : ""}</legend>
+            {q.description && <p style={{ color: "#626078", fontSize: 12, lineHeight: 1.45, margin: "0 0 8px" }}>{q.description}</p>}
+            {q.type === "short" && <input style={inp} value={value} onChange={(e) => update(e.target.value)} />}
+            {q.type === "paragraph" && <textarea style={{ ...inp, minHeight: 70 }} value={value} onChange={(e) => update(e.target.value)} />}
+            {q.type === "dropdown" && <select style={inp} value={value} onChange={(e) => update(e.target.value)}><option value="">Select an option</option>{q.options.map((option) => <option key={option}>{option}</option>)}</select>}
+            {q.type === "multiple" && q.options.map((option) => <label key={option} style={{ display: "block", margin: "6px 0" }}><input type="radio" name={`feedback-${index}`} checked={value === option} onChange={() => update(option)} /> {option}</label>)}
+            {q.type === "checkboxes" && q.options.map((option) => <label key={option} style={{ display: "block", margin: "6px 0" }}><input type="checkbox" checked={selected.includes(option)} onChange={(e) => { const next = e.target.checked ? [...selected, option] : selected.filter((v) => v !== option); update(next.length ? JSON.stringify(next) : ""); }} /> {option}</label>)}
+            {(q.type === "scale" || q.type === "stars") && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{Array.from({ length: q.scaleMax }, (_, i) => i + 1).map((n) => <button key={n} type="button" aria-label={`${n} of ${q.scaleMax}`} aria-pressed={value === String(n)} onClick={() => update(String(n))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #cad5e2", background: value === String(n) ? "#dcefe3" : "white", color: q.type === "stars" && Number(value) >= n ? "#c18b00" : "#344", fontSize: q.type === "stars" ? 22 : 13 }}>{q.type === "stars" ? "★" : n}</button>)}</div>}
+          </fieldset>; })}
           <label style={lab}>Interview notes</label>
           <textarea
             style={{ ...inp, minHeight: 70 }}
@@ -798,12 +806,16 @@ export function CandidatePanel({
           <button
             style={{ ...saveBtn, marginTop: 10 }}
             onClick={async () => {
+              const questions = (pendingInterview?.feedbackForm?.questions || []).map(normalizeQuestion);
+              if (questions.some((q, index) => !validFeedbackAnswer(q, customAnswers[index] || ""))) { alert("Please complete the required feedback questions."); return; }
+
               const r = await apiFetch(`/api/candidates/${c.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   action: "feedback",
                   feedback: fb,
+                  customAnswers: questions.map((question, index) => ({ question: question.label, answer: customAnswers[index] || "" })),
                   rating,
                   recommendation: rec,
                   interviewId: pendingInterview?.id,
@@ -814,6 +826,7 @@ export function CandidatePanel({
               if (!r.ok) alert(d.error);
               else {
                 setFb("");
+                setCustomAnswers({});
                 setFeedbackFor("");
                 onRefresh();
               }
@@ -846,7 +859,10 @@ export function CandidatePanel({
                     });
                     const d = await r.json();
                     if (!r.ok) alert(d.error);
-                    else onRefresh();
+                    else {
+                      if (dec === "Reject") signalHoneyBadgerMood("sad");
+                      onRefresh();
+                    }
                   }}
                 >
                   {dec}
@@ -867,6 +883,8 @@ export function CandidatePanel({
               ? ` · Round ${iv.roundIndex}: ${iv.roundName}`
               : ` · ${iv.stage}`} {" "}
             · {iv.status}{iv.rescheduleRequestedBy ? ` · ${iv.rescheduleRequestedBy} requested` : ""}
+            {iv.format === "in-person" && iv.location && <> · {iv.location}</>}
+            {iv.format === "phone" && <> · Telephonic{iv.phoneInstructions ? ` · ${iv.phoneInstructions}` : ""}</>}
             {iv.meetLink && (
               <>
                 {" "}
@@ -877,6 +895,7 @@ export function CandidatePanel({
               </>
             )}
           </div>
+          <ActivityHistory path={`/api/schedule?activity=${encodeURIComponent(iv.id)}`} apiFetch={apiFetch} />
           {canRecruit(role) && iv.status === "Reschedule Requested" && (
             <div style={{ display: "flex", alignItems: "end", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
               <div>

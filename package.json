@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node scripts/test-automations.cjs",
     "seed": "npx tsx scripts/seed.ts",
     "clean": "rm -rf .next"
   },
@@ -18,14 +19,17 @@
     "mammoth": "^1.12.3",
     "next": "15.5.25",
     "pdf-parse": "^2.4.5",
+    "pdfmake": "0.2.20",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.6.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20.19.43",
+    "@types/pdfmake": "0.2.12",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

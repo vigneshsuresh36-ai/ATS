@@ -1,6 +1,7 @@
 import type { Role } from "./types";
 
 export const ROLE_RANK: Record<Role, number> = {
+  Employee: 0,
   HiringManager: 1,
   DepartmentHead: 2,
   Recruiter: 3,
@@ -8,6 +9,7 @@ export const ROLE_RANK: Record<Role, number> = {
 };
 
 export const ROLE_LABELS: Record<Role, string> = {
+  Employee: "Employee",
   Admin: "Admin",
   Recruiter: "Recruiter",
   HiringManager: "Hiring Manager",
@@ -26,6 +28,10 @@ export function canRecruit(role: Role): boolean {
 
 export function canManageTeam(role: Role): boolean {
   return role === "Admin";
+}
+
+export function requiresDepartment(role: Role): boolean {
+  return role === "HiringManager" || role === "DepartmentHead" || role === "Employee";
 }
 
 export function canRaiseReq(role: Role): boolean {
@@ -56,16 +62,6 @@ export const LOCATIONS = [
 ] as const;
 
 export type LocationCity = (typeof LOCATIONS)[number];
-
-export const SEED_USERS = [
-  {
-    email: "vigneshsuresh36@gmail.com",
-    name: "Vignesh Suresh",
-    role: "Admin" as Role,
-    title: "Admin",
-    departments: [...DEPARTMENTS] as string[],
-  },
-];
 
 export function userCoversDepartment(
   departments: string[] | undefined,
