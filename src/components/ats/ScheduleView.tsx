@@ -2,6 +2,7 @@
 
 import { RecruitmentDrive } from "./RecruitmentDrive";
 import { ActivityHistory } from "./ActivityHistory";
+import { DateTimeField } from "./DateTimeField";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { formatDate } from "@/lib/dateFormat";
@@ -459,7 +460,7 @@ export function ScheduleView({
             >
               <div>
                 <label style={{ ...lab, marginTop: 0 }}>Date & time *</label>
-                <input
+                <DateTimeField
                   type="datetime-local"
                   style={inp}
                   required

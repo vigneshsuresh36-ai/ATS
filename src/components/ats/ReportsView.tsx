@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
+import { DateTimeField } from "./DateTimeField";
 
 type Item = Record<string, unknown>;
 type ReportData = Record<string, Item[]>;
@@ -143,10 +144,10 @@ function ReportBuilder({ reportData }: { reportData?: ReportData }) {
             <input value={reportName} onChange={(event) => setReportName(event.target.value)} maxLength={80} style={reportInput} />
           </label>
           <label style={reportLabel}>From
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={reportInput} />
+            <DateTimeField type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={reportInput} />
           </label>
           <label style={reportLabel}>To
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={reportInput} />
+            <DateTimeField type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={reportInput} />
           </label>
         </div>
         <div style={reportFields} role="group" aria-label={`Fields to include in ${schema.label} report`}>

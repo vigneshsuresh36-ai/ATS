@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Candidate, DojChangeHistory, JoiningStatus, JoiningStatusHistory } from "@/lib/types";
+import { DateTimeField } from "./DateTimeField";
 
 type JoiningRow = Candidate & {
   requisitionTitle: string;
@@ -274,8 +275,8 @@ export function OfferJoiningView({
         <select value={recruiter} onChange={(event) => setRecruiter(event.target.value)} aria-label="Filter by recruiter"><option value="">All recruiters</option>{recruiters.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={offerStatus} onChange={(event) => setOfferStatus(event.target.value)} aria-label="Filter by offer status"><option value="">All offer statuses</option>{offerStatuses.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={joiningStatus} onChange={(event) => setJoiningStatus(event.target.value)} aria-label="Filter by joining status"><option value="">All joining statuses</option>{["Awaiting Confirmation", "Confirmed", "Rescheduled", ...JOINING_STATUSES].map((item) => <option key={item}>{item}</option>)}</select>
-        <label>DOJ from<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-        <label>DOJ to<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+        <label>DOJ from<DateTimeField type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+        <label>DOJ to<DateTimeField type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
         {hasFilters && <button type="button" className="ats-joining-clear" onClick={resetFilters}>Clear filters</button>}
       </div>
       {message && <p className="ats-joining-message" role="status">{message}<button type="button" aria-label="Dismiss message" onClick={() => setMessage("")}>×</button></p>}
@@ -310,7 +311,7 @@ export function OfferJoiningView({
             {modal === "doj" && <div className="ats-joining-form">
               <label>Initial DOJ<input value={displayDate(selected.initialDoj || selected.tentativeDoj)} readOnly /></label>
               <label>Current DOJ<input value={displayDate(selected.currentDoj || selected.initialDoj || selected.tentativeDoj)} readOnly /></label>
-              <label>Revised DOJ *<input type="date" value={revisedDoj} onChange={(event) => setRevisedDoj(event.target.value)} /></label>
+              <label>Revised DOJ *<DateTimeField type="date" value={revisedDoj} onChange={(event) => setRevisedDoj(event.target.value)} /></label>
               <label>Reason for Change *<select value={dojReason} onChange={(event) => setDojReason(event.target.value)}><option value="">Choose a reason</option>{DOJ_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
               <label className="is-wide">Remarks{dojReason === "Other" ? " *" : ""}<textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} rows={3} maxLength={2000} /></label>
             </div>}

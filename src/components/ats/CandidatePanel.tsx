@@ -5,8 +5,8 @@ import { normalizeQuestion, validFeedbackAnswer } from "@/lib/feedbackForms";
 import { HiringAssistant } from "./HiringAssistant";
 import { CandidateCommunicationHistory } from "./CandidateCommunicationHistory";
 import { CandidateComments } from "./CandidateComments";
-import { CallCandidate } from "./CallCandidate";
 import { VoiceDictation } from "./VoiceDictation";
+import { DateTimeField } from "./DateTimeField";
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
@@ -394,7 +394,6 @@ export function CandidatePanel({
       </div>
         <section id="ats-profile-activity" className="ats-profile-section ats-profile-tools"><header><h4>Activity &amp; history</h4><p>Screening results, communication history and interview progress.</p></header><div className="ats-profile-tool-list">
           {(role === "Admin" || role === "Recruiter" || role === "HiringManager") && <details className="premium-candidate-evidence"><summary>AI screening: evidence against role requirements</summary><HiringAssistant key={c.id} apiFetch={apiFetch} mode="candidate" candidateId={c.id} embedded /></details>}
-          {canRecruit(role) && <div className="ats-call-row"><span>Phone: {c.phone || "—"}</span><CallCandidate candidate={c} apiFetch={apiFetch} /></div>}
           {(role === "Admin" || role === "Recruiter") && <CandidateCommunicationHistory key={c.id} candidateId={c.id} apiFetch={apiFetch} />}
       <details className="ats-candidate-history">
         <summary>Candidate timeline ({timeline.length})</summary>
@@ -587,7 +586,7 @@ export function CandidatePanel({
               <div className="ats-offer-override-grid">
                 <div>
                   <label style={lab} htmlFor="offer-approval-doj">Tentative DOJ *</label>
-                  <input id="offer-approval-doj" style={inp} type="date" required value={tentativeDoj} onChange={(event) => setTentativeDoj(event.target.value)} />
+                  <DateTimeField id="offer-approval-doj" style={inp} type="date" required value={tentativeDoj} onChange={(event) => setTentativeDoj(event.target.value)} />
                 </div>
                 <div>
                   <label style={lab} htmlFor="offer-approval-fixed">Fixed CTC *</label>
@@ -639,7 +638,7 @@ export function CandidatePanel({
             Submit the complete proposed package to the candidate&apos;s Department Head. Enter 0 when ESOPs or bonus do not apply.
           </p>
           <label style={lab}>Tentative DOJ *</label>
-          <input style={inp} type="date" value={tentativeDoj} onChange={(e) => setTentativeDoj(e.target.value)} />
+          <DateTimeField style={inp} type="date" value={tentativeDoj} onChange={(e) => setTentativeDoj(e.target.value)} />
           <label style={lab}>Fixed CTC to be offered *</label>
           <input style={inp} inputMode="numeric" value={offeredFixedCtc} onChange={(e) => setOfferedFixedCtc(e.target.value.replace(/\D/g, ""))} placeholder="Numbers only" />
           <label style={lab}>Variable CTC to be offered *</label>
@@ -902,7 +901,7 @@ export function CandidatePanel({
             <div style={{ display: "flex", alignItems: "end", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
               <div>
                 <label style={lab} htmlFor={`reschedule-${iv.id}`}>New interview date and time</label>
-                <input
+                <DateTimeField
                   id={`reschedule-${iv.id}`}
                   style={inp}
                   type="datetime-local"

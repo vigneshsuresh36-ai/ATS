@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { StatusAuditEvent } from "@/lib/statusAudit";
 import { ActivityEvents } from "./ActivityHistory";
+import { DateTimeField } from "./DateTimeField";
 
 function csvCell(value: unknown) {
   const text = value === null || value === undefined ? "" : String(value);
@@ -76,8 +77,8 @@ export function StatusAuditReport({ apiFetch }: {
             {["Manual", "API", "AI", "Automation", "System"].map((source) => <option key={source}>{source}</option>)}
           </select>
         </label>
-        <label>From (UTC)<input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
-        <label>To (UTC)<input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+        <label>From (UTC)<DateTimeField type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
+        <label>To (UTC)<DateTimeField type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
         <button type="submit" className="ats-primary-button" disabled={busy}>Apply filters</button>
         <button type="button" className="ats-primary-button" disabled={busy} onClick={() => void load(true)}>Export CSV</button>
       </form>

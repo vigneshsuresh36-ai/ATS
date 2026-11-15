@@ -1936,19 +1936,6 @@ html:has(.premium-workspace > .ats-overlay .ats-pipeline-panel),
 .ats-audit-filters label { display: grid; gap: 4px; color: #555650; }
 .ats-audit-filters :is(input, select) { min-height: 36px; max-width: 100%; padding: 0 9px; border: 1px solid #d3d3d3; border-radius: 6px; }
 
-.ats-drive { margin-bottom: 16px; }
-.ats-drive fieldset { min-width: 0; margin: 12px 0 0; padding: 0; border: 0; }
-.ats-drive legend, .ats-drive h4 { margin: 12px 0 8px; font-weight: 700; }
-.ats-drive-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr)); align-items: end; gap: 10px; margin-bottom: 10px; }
-.ats-drive-fields label { display: grid; gap: 4px; min-width: 0; }
-.ats-drive :is(input:not([type="checkbox"]), select) { min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid #d3d3d3; border-radius: 6px; background: #fff; }
-.ats-drive-roster { list-style: none; padding: 0; margin: 0 0 12px; max-height: 260px; overflow: auto; }
-.ats-drive-roster li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid #eee; padding: 5px 0; }
-.ats-drive-roster input[type="number"] { width: 80px; margin-left: 8px; }
-.ats-drive-table { overflow: auto; }
-.ats-drive-table table { width: 100%; border-collapse: collapse; text-align: left; }
-.ats-drive-table :is(th, td) { padding: 8px; border-bottom: 1px solid #eee; }
-.ats-drive-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
 .ats-role-details-layout { display:grid; grid-template-columns:minmax(0, 1.7fr) minmax(0, 1fr); gap:16px; align-items:start; }
 .ats-role-details-main, .ats-role-details-side { display:grid; gap:14px; min-width:0; }
@@ -2222,3 +2209,114 @@ dialog.ats-call-dialog::backdrop { background: #12121280; backdrop-filter: blur(
 .premium-workspace .ats-voice-btn { margin: 4px 0 6px; padding: 6px 12px; border: 1.5px solid #1d1d1f !important; border-radius: 16px; background: #fff; color: #1d1d1f; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: none !important; }
 .premium-workspace .ats-voice-btn.is-live { background: #a02020; border-color: #a02020 !important; color: #fff; }
 
+
+/* Date and time picker (black, grey and white) */
+.ats-dt { position: relative; display: block; width: 100%; min-width: 150px; }
+.ats-dt .ats-dt-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid #d8d8d4; border-radius: 6px; background: #fff; color: #191919; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.ats-dt .ats-dt-trigger:hover:not(:disabled) { border-color: #191919; }
+.ats-dt .ats-dt-trigger[aria-expanded="true"] { border-color: #191919; box-shadow: 0 0 0 3px #19191914; }
+.ats-dt .ats-dt-trigger:disabled { opacity: .55; cursor: not-allowed; }
+.ats-dt .ats-dt-trigger svg { flex: 0 0 auto; color: #6b6b67; }
+.ats-dt .is-placeholder { color: #8a8a85; }
+.ats-dt .ats-dt-required { position: absolute; left: 0; bottom: 0; width: 100%; height: 1px; opacity: 0; pointer-events: none; padding: 0; border: 0; }
+.ats-dt .ats-dt-panel { position: fixed; z-index: 1600; width: 304px; max-height: calc(100vh - 24px); overflow-y: auto; max-width: calc(100vw - 24px); padding: 14px; background: #fff; color: #191919; border: 1px solid #d8d8d4; border-radius: 10px; box-shadow: 0 14px 40px #00000026; display: grid; gap: 12px; }
+.ats-dt .ats-dt-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ats-dt .ats-dt-head strong { font-size: 15px; }
+.ats-dt .ats-dt-head button { width: 30px; height: 30px; border: 1px solid #e5e3de; border-radius: 6px; background: #fff; color: #191919; font-size: 18px; line-height: 1; cursor: pointer; }
+.ats-dt .ats-dt-head button:hover { background: #191919; color: #fff; border-color: #191919; }
+.ats-dt .ats-dt-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.ats-dt .ats-dt-dow { text-align: center; font-size: 12px; font-weight: 700; color: #6b6b67; padding: 4px 0; }
+.ats-dt .ats-dt-day { aspect-ratio: 1; min-height: 34px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #191919; font: inherit; font-size: 13px; cursor: pointer; }
+.ats-dt .ats-dt-day.is-muted { color: #a5a5a0; }
+.ats-dt .ats-dt-day:hover { background: #eeede9; }
+.ats-dt .ats-dt-day.is-today { border-color: #8c8c88; font-weight: 700; }
+.ats-dt .ats-dt-day.is-selected { background: #191919; border-color: #191919; color: #fff; font-weight: 700; }
+.ats-dt .ats-dt-time { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid #eeede9; }
+.ats-dt .ats-dt-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6b6b67; }
+.ats-dt .ats-dt-time-row { display: flex; align-items: center; gap: 8px; }
+.ats-dt .ats-dt-time-row select { width: 64px; min-height: 36px; padding: 6px 8px; border: 1px solid #d8d8d4; border-radius: 6px; background: #fff; color: #191919; font: inherit; font-size: 14px; }
+.ats-dt .ats-dt-ampm { display: inline-flex; margin-left: auto; border: 1px solid #191919; border-radius: 6px; overflow: hidden; }
+.ats-dt .ats-dt-ampm button { padding: 7px 12px; border: 0; background: #fff; color: #191919; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.ats-dt .ats-dt-ampm button.is-on { background: #191919; color: #fff; }
+.ats-dt .ats-dt-foot { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #eeede9; }
+.ats-dt .ats-dt-foot button { padding: 7px 12px; border: 0; background: transparent; color: #191919; font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; border-radius: 6px; cursor: pointer; }
+.ats-dt .ats-dt-foot button:hover { background: #eeede9; }
+.ats-dt .ats-dt-foot button.is-primary:hover, .ats-dt .ats-dt-foot button.is-primary:focus-visible { background: #fff; color: #191919; }
+.ats-dt .ats-dt-foot button.is-primary { margin-left: auto; padding: 8px 18px; border: 1px solid #191919; border-radius: 6px; background: #191919; color: #fff; text-decoration: none; }
+.premium-workspace .ats-dt button { box-shadow: none !important; }
+.ats-dt button:focus-visible, .ats-dt select:focus-visible { outline: 2px solid #191919; outline-offset: 2px; }
+
+/* Recruitment drive */
+.ats-drive { margin-bottom: 16px; }
+.ats-drive .drive-booked { list-style: none; margin: 8px 0 12px; padding: 0; max-height: 260px; overflow: auto; }
+.ats-drive .drive-booked li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eeede9; font-size: 13px; }
+.drive-page { display: grid; gap: 16px; padding-top: 12px; }
+.drive-lead { margin: 0; color: #6b6b67; }
+.drive-steps { display: flex; flex-wrap: wrap; gap: 8px; }
+.drive-steps a { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 20px; background: #191919; color: #fff; font-size: 13px; font-weight: 600; text-decoration: none; }
+.drive-steps a b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #fff; color: #191919; font-size: 12px; }
+.drive-set { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 16px; }
+.drive-card { min-width: 0; padding: 22px 24px; background: #fff; border: 1px solid #e5e3de; border-radius: 12px; scroll-margin-top: 90px; }
+.drive-card h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 4px; font-size: 16px; }
+.drive-card h3 i { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #191919; color: #fff; font-size: 12px; font-style: normal; }
+.drive-hint { margin: 0 0 16px; color: #6b6b67; font-size: 13px; }
+.drive-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 14px 16px; align-items: start; }
+.drive-grid-2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.drive-grid label, .drive-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b6b67; align-content: start; }
+.drive-label { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b6b67; }
+.drive-page :is(select, input:not([type="checkbox"])) { min-width: 0; width: 100%; min-height: 40px; padding: 0 12px; border: 1px solid #d8d8d4; border-radius: 7px; background: #fff; color: #191919; font: inherit; font-size: 14px; letter-spacing: 0; text-transform: none; font-weight: 400; }
+.drive-page :is(select, input):focus-visible { outline: 2px solid #191919; outline-offset: 1px; }
+.drive-page input[type="checkbox"] { width: 18px; height: 18px; accent-color: #191919; cursor: pointer; }
+.drive-seg { display: inline-flex; width: fit-content; max-width: 100%; border: 1px solid #191919; border-radius: 7px; overflow: hidden; }
+.premium-workspace .drive-seg button { padding: 10px 14px; border: 0 !important; background: #fff; color: #191919; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-seg button.is-on { background: #191919; color: #fff; }
+.premium-workspace .drive-seg button:disabled { opacity: .4; cursor: not-allowed; }
+.drive-window { margin: 14px 0 0; padding: 10px 14px; background: #f1efea; border-radius: 8px; font-size: 13px; }
+.drive-panel { margin-bottom: 12px; padding: 16px; background: #faf9f6; border: 1px solid #e5e3de; border-radius: 10px; }
+.drive-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.premium-workspace .drive-link { padding: 0; border: 0 !important; background: transparent; color: #6b6b67; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-link:hover { color: #191919; }
+.premium-workspace .drive-add { padding: 9px 14px; border: 1.5px dashed #9a9a95 !important; border-radius: 8px; background: #fff; color: #191919; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-add:hover:not(:disabled) { border-color: #191919 !important; }
+.drive-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 40px; padding: 5px 8px; border: 1px solid #d8d8d4; border-radius: 7px; background: #fff; }
+.drive-chips:focus-within { border-color: #191919; }
+.drive-chips input { flex: 1 1 140px; width: auto !important; min-height: 28px !important; padding: 0 4px !important; border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.drive-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 14px; background: #191919; color: #fff; font-size: 13px; letter-spacing: 0; text-transform: none; font-weight: 400; }
+.premium-workspace .drive-chip button { padding: 0 4px; border: 0 !important; background: transparent; color: #fff; opacity: .7; font-size: 15px; line-height: 1; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-chip button:hover { opacity: 1; }
+.drive-tools { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 14px; }
+.drive-empty, .drive-muted { color: #8a8a85; font-size: 13px; margin: 0; }
+.drive-table-wrap { overflow-x: auto; border: 1px solid #e5e3de; border-radius: 10px; background: #fff; }
+.drive-table { width: 100%; border-collapse: collapse; text-align: left; }
+.drive-table th { padding: 10px 12px; background: #f1efea; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #444; white-space: nowrap; }
+.drive-table td { padding: 10px 12px; border-top: 1px solid #eeede9; font-size: 14px; vertical-align: middle; }
+.drive-table tr.is-selected td { background: #f7f6f2; }
+.drive-table tr.has-issue td { background: #fdf6f5; }
+.drive-table td input[type="number"] { width: 90px; }
+.drive-timetable td:first-child { min-width: 230px; }
+.drive-timetable select { min-width: 170px; }
+.drive-tag { padding: 3px 9px; border-radius: 5px; background: #e6f2e6; color: #2c6b3a; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.drive-status { display: inline-block; padding: 3px 10px; border-radius: 5px; background: #eeede9; font-size: 12px; font-weight: 700; }
+.drive-status.is-ok { background: #e6f2e6; color: #2c6b3a; }
+.drive-status.is-bad { background: #fbe3e3; color: #a02020; }
+.premium-workspace .drive-x { width: 30px; height: 30px; border: 1px solid #d8d8d4 !important; border-radius: 6px; background: #fff; color: #191919; font-size: 18px; line-height: 1; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-x:hover:not(:disabled) { background: #b5262c; border-color: #b5262c !important; color: #fff; }
+.drive-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.drive-stats { display: flex; flex-wrap: wrap; gap: 12px; }
+.drive-stats > div { padding: 12px 18px; min-width: 150px; background: #fff; border: 1px solid #e5e3de; border-radius: 10px; }
+.drive-stats span { display: block; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b6b67; }
+.drive-stats b { font-size: 20px; }
+.drive-alert { margin: 0; padding: 10px 14px; background: #fbe3e3; color: #a02020; border-radius: 8px; font-size: 13px; }
+.drive-banner { margin: 0; padding: 12px 16px; background: #eeede9; border-radius: 10px; font-size: 13px; color: #444; }
+.drive-bar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; background: #fff; border: 1px solid #e5e3de; border-radius: 12px; box-shadow: 0 -6px 20px #0000000f; }
+.drive-sum { display: flex; flex-wrap: wrap; gap: 24px; }
+.drive-sum > div { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b6b67; }
+.drive-sum b { display: block; margin-top: 2px; font-size: 16px; letter-spacing: 0; text-transform: none; color: #191919; }
+.drive-note { font-size: 13px; color: #6b6b67; }
+.drive-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.premium-workspace .drive-primary, .premium-workspace .drive-ghost { padding: 12px 22px; border: 1.5px solid #191919 !important; border-radius: 8px; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: none !important; }
+.premium-workspace .drive-primary { background: #191919; color: #fff; }
+.premium-workspace .drive-primary:hover:not(:disabled) { background: #fff; color: #191919; }
+.premium-workspace .drive-ghost { background: #fff; color: #191919; }
+.premium-workspace .drive-ghost:hover:not(:disabled) { background: #eeede9; }
+.drive-page button:focus-visible { outline: 2px solid #191919; outline-offset: 2px; }
