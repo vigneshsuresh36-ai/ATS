@@ -1,4 +1,4 @@
-import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { canViewScopedRequisition, scopeDepartments } from "@/lib/requisitionScope";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { requestStatusAudit } from "@/lib/requestStatusAudit";
 import { readRecordActivity } from "@/lib/statusAudit";
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
         user.role === "HiringManager"
           ? { raisedByEmail: user.email }
           : user.role === "DepartmentHead"
-            ? { departments: user.departments || [] }
+            ? { departments: scopeDepartments(user) }
             : undefined
       );
       const visibleIds = new Set(visibleReqs
@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
     return json({
       interviews: interviews.map((interview) => ({
         ...interview,
+        hasFeedback: feedbackByInterview.has(interview.id),
         feedbackPending:
           interview.status !== "Cancelled" &&
           interview.status !== "Reschedule Requested" &&
@@ -384,6 +385,10 @@ export async function PATCH(req: NextRequest) {
     const interviewerEmails = Array.isArray(body.interviewerEmails)
       ? (body.interviewerEmails as string[])
       : undefined;
+    let format = existing.format;
+    let location = existing.location || "";
+    let phoneInstructions = existing.phoneInstructions || "";
+    let rescheduleCandidate: Awaited<ReturnType<typeof getCandidate>> = null;
 
     if (
       status !== undefined &&
@@ -411,23 +416,57 @@ export async function PATCH(req: NextRequest) {
     if (datetime && Number.isNaN(new Date(datetime).getTime())) {
       throw new ApiError(400, "Enter a valid interview date and time.");
     }
+    if (status === "Rescheduled") {
+      if (Date.parse(datetime!) <= Date.now()) throw new ApiError(400, "Choose a future interview date and time.");
+      if (!["Approved", "Position Reopened", "Partially Fulfilled"].includes(requisition.status)) throw new ApiError(400, "The hiring request must be open to reschedule an interview.");
+      const candidate = await getCandidate(existing.candidateId);
+      rescheduleCandidate = candidate;
+      if (!candidate || candidate.archived || ["Rejected", "Social CV Reject", "Candidate Backed Out", "Onboarded"].includes(candidate.stage)) throw new ApiError(400, "This candidate is not available for rescheduling.");
+      if (interviewerEmails && (!interviewerEmails.length || interviewerEmails.length > 20 || interviewerEmails.some((email) => typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))) throw new ApiError(400, "Enter valid interviewer email addresses.");
+      if (existing.calendarEventId && !isCalendarEnabled()) throw new ApiError(503, "Reconnect Google Calendar before rescheduling this interview, so its invitation can be updated.");
+      if (body.format !== undefined) {
+        if (!["video", "in-person", "phone"].includes(body.format)) throw new ApiError(400, "Choose a valid interview format.");
+        format = body.format;
+        if (format === "video" && !isCalendarEnabled()) throw new ApiError(400, "Connect Google Calendar before scheduling a video interview.");
+        location = ""; phoneInstructions = "";
+        if (format === "in-person") {
+          const office = (await getOrg()).officeLocations?.find((item) => item.name === body.officeName && (item.city || "") === body.officeCity);
+          if (!office) throw new ApiError(400, "Choose a saved office location.");
+          location = [...new Set([office.name, office.address, office.city].filter(Boolean))].join(", ");
+        }
+        if (format === "phone") {
+          phoneInstructions = typeof body.phoneInstructions === "string" ? body.phoneInstructions.trim() : "";
+          if (!phoneInstructions || phoneInstructions.length > 300) throw new ApiError(400, "Enter phone call instructions up to 300 characters.");
+        }
+      }
+    }
 
-    const audit = status !== undefined && status !== existing.status ? await requestStatusAudit(user, body.reason) : undefined;
+    const audit = status !== undefined && status !== existing.status ? await requestStatusAudit(user, status === "Rescheduled" && !body.reason ? "Interview rescheduled with a new time." : body.reason) : undefined;
+    let meetLink = existing.meetLink || "";
+    let calendarEventId = existing.calendarEventId || "";
     if (isCalendarEnabled() && existing.calendarEventId) {
       try {
         if (status === "Cancelled") {
           await cancelInterviewCalendarEvent(existing.calendarEventId);
         } else if (datetime || interviewerEmails) {
           const candidate = interviewerEmails ? await getCandidate(existing.candidateId) : null;
-          await updateInterviewCalendarEvent(existing.calendarEventId, {
+          const updatedEvent = await updateInterviewCalendarEvent(existing.calendarEventId, {
             startIso: datetime,
             attendeeEmails: interviewerEmails ? [...interviewerEmails, ...(candidate?.email ? [candidate.email] : [])] : undefined,
+            ...(status === "Rescheduled" && body.format !== undefined ? { video: format === "video", location, formatDescription: format === "phone" ? `Format: Phone\nCall instructions: ${phoneInstructions}` : format === "in-person" ? "Format: In person" : "Format: Google Meet" } : {}),
           });
+          if (status === "Rescheduled" && body.format !== undefined) meetLink = format === "video" ? updatedEvent.meetLink || "" : "";
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Calendar update failed";
         throw new ApiError(502, `Calendar update failed: ${msg}`);
       }
+    }
+    if (status === "Rescheduled" && body.format !== undefined && !existing.calendarEventId && isCalendarEnabled()) {
+      try {
+        const event = await createInterviewCalendarEvent({ summary: `${existing.roundName || existing.stage}: ${rescheduleCandidate?.name || "Candidate"} — ${requisition.title}`, video: format === "video", location, description: format === "phone" ? `Format: Phone\nCall instructions: ${phoneInstructions}` : format === "in-person" ? "Format: In person" : "Format: Google Meet", startIso: datetime!, durationMinutes: existing.durationMinutes, attendeeEmails: [...(interviewerEmails || existing.interviewerEmails), ...(rescheduleCandidate?.email ? [rescheduleCandidate.email] : [])] });
+        calendarEventId = event.eventId; meetLink = event.meetLink || "";
+      } catch (e) { throw new ApiError(502, `Could not create the calendar invitation: ${e instanceof Error ? e.message : "Calendar error"}`); }
     }
 
     await updateInterview(id, {
@@ -435,7 +474,8 @@ export async function PATCH(req: NextRequest) {
       rescheduleRequestedBy: status === "Reschedule Requested" ? rescheduleRequestedBy : existing.rescheduleRequestedBy,
       datetime,
       interviewerEmails,
-    }, audit, existing.status);
+      ...(status === "Rescheduled" && body.format !== undefined ? { format, location, phoneInstructions, meetLink, calendarEventId } : {}),
+    }, audit, existing.status).catch(async (error) => { if (!existing.calendarEventId && calendarEventId) await cancelInterviewCalendarEvent(calendarEventId).catch(() => {}); throw error; });
     await addAudit({
       action: "interview.update",
       actorEmail: user.email,

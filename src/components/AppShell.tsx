@@ -175,6 +175,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
     reqId: string;
     candidateId: string;
     roundIndex: number;
+    rescheduleInterview?: import("@/lib/types").Interview;
   } | null>(null);
 
   useEffect(() => {
@@ -504,7 +505,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
   }
 
   /** Opens feedback, debrief or offer in a side panel on top of the pipeline. */
-  async function openCandidateDrawer(id: string, section: "feedback" | "debrief" | "offer", reqId: string) {
+  async function openCandidateDrawer(id: string, section: "feedback" | "update-feedback" | "debrief" | "offer", reqId: string) {
     const [{ CandidatePanel }, r] = await Promise.all([
       import("@/components/ats/CandidatePanel"),
       apiFetch(`/api/candidates/${id}`),
@@ -551,6 +552,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
       setMsg(rd.error || "Failed to load requisition.");
       return;
     }
+    setReqs((current) => current.some((item) => item.id === reqId && (item.status !== rd.requisition.status || item.updatedAt !== rd.requisition.updatedAt)) ? current.map((item) => item.id === reqId ? { ...item, ...rd.requisition } : item) : current);
     const roleTeam: AppUser[] = teamResponse?.ok ? (await teamResponse.json()).users || [] : team;
     if (teamResponse?.ok) setTeam(roleTeam);
     setPipelinePanel(
@@ -576,6 +578,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
           setSchedulePrefill({ reqId, candidateId, roundIndex });
           setTab("schedule");
         }}
+        onRescheduleInterview={(interview) => { closeModal(); setSchedulePrefill({ reqId, candidateId: interview.candidateId, roundIndex: interview.roundIndex || 1, rescheduleInterview: interview }); setTab("schedule"); }}
       />
     );
     panelDismiss.current = null;
@@ -1048,7 +1051,7 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
             officeLocations={orgSettings?.officeLocations}
             key={
               schedulePrefill
-                ? `${schedulePrefill.reqId}-${schedulePrefill.candidateId}-${schedulePrefill.roundIndex}`
+                ? `${schedulePrefill.reqId}-${schedulePrefill.candidateId}-${schedulePrefill.roundIndex}-${schedulePrefill.rescheduleInterview?.id || "new"}`
                 : "schedule"
             }
             reqs={reqs.filter(
@@ -1057,11 +1060,14 @@ export default function AppShell({ jobDescriptionId, initialRoleId, hiringReques
             )}
             apiFetch={apiFetch}
             readOnly={role === "HiringManager"}
+            onOpenCandidate={(candidateId) => { void openCandidate(candidateId); }}
             initialReqId={schedulePrefill?.reqId}
             initialCandidateId={schedulePrefill?.candidateId}
             initialRoundIndex={schedulePrefill?.roundIndex}
+            rescheduleInterview={schedulePrefill?.rescheduleInterview}
+            onCancelReschedule={() => setSchedulePrefill(null)}
             onDone={() => {
-              setMsg("Interview scheduled.");
+              setMsg(schedulePrefill?.rescheduleInterview ? "Interview rescheduled." : "Interview scheduled.");
               setSchedulePrefill(null);
             }}
           />

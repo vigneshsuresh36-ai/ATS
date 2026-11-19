@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     if (body.members.length > 250) throw new ApiError(400, "Upload no more than 250 team members at a time.");
     const mode = body.mode === "preview" ? "preview" : "commit";
     const org = await getOrg();
+    const scopedRole = (role: Role) => role === "HiringManager" || role === "DepartmentHead";
     const referralsEnabled = org.employeeReferralsEnabled === true;
     const allowedDepartments = [...DEPARTMENTS, ...(org.customDepartments || [])];
     const existingUsers = await listUsers(true);
@@ -65,6 +66,10 @@ export async function POST(request: Request) {
       }
       const existing = usersByCode.get(employeeCode.toLowerCase());
       const emailOwner = usersByEmail.get(email);
+      if (org.businessUnits?.length && scopedRole(role) && !(existing?.role === role && existing.accessScopes?.length)) {
+        errors.push({ row, employeeCode, email, message: "Assign hiring access scopes in Teams & Access for this role." });
+        continue;
+      }
       if (existing && existing.email.toLowerCase() !== email) {
         errors.push({ row, employeeCode, email, message: "Official Email ID cannot be changed for an existing Employee Code." });
         continue;
@@ -98,7 +103,8 @@ export async function POST(request: Request) {
           name: member.name,
           role: member.role,
           title: existing?.title || ROLE_LABELS[member.role],
-          departments: member.role === "Admin" ? allowedDepartments : member.departments,
+          departments: member.role === "Admin" ? allowedDepartments : existing?.role === member.role && existing.accessScopes?.length ? existing.departments : member.departments,
+          ...(existing?.accessScopes !== undefined && (existing.role !== member.role || !scopedRole(member.role)) ? { accessScopes: [] } : {}),
           ...(member.role === "Recruiter" ? { managerEmail: existing?.managerEmail || user.email } : {}),
           active: true,
         });

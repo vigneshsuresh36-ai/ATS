@@ -1,3 +1,4 @@
+import { coversRequisitionScope } from "./requisitionScope";
 import { createHash } from "node:crypto";
 import type { AutomationContext } from "./automationContext";
 import type { AutomationSettings, AutomationTask, WorkflowId } from "./automationTypes";
@@ -23,7 +24,7 @@ export function planAutomations(ctx: AutomationContext, settings: AutomationSett
   for (const r of ctx.requisitions) {
     const candidates = ctx.candidates.filter((c) => c.reqId === r.id);
     if (r.status === "PendingApproval" && now - Date.parse(r.updatedAt) >= settings.approvals.delayHours * 3600000) {
-      const recipients = ctx.users.filter((u) => u.active && (r.department ? u.role === "DepartmentHead" && u.departments.some((d) => d.toLowerCase() === r.department.toLowerCase()) : u.role === "Admin")).map((u) => u.email);
+      const recipients = ctx.users.filter((u) => u.active && (r.department ? u.role === "DepartmentHead" && coversRequisitionScope(u, r) : u.role === "Admin")).map((u) => u.email);
       add("approvals", `${r.id}:${r.updatedAt}`, { reqId: r.id, sourceVersion: r.updatedAt, title: "Hiring request awaiting approval", detail: r.title }, values("", r.title), recipients);
     }
     if (["Rejected", "Closed", "Position Closed", "Position Fulfilled"].includes(r.status)) continue;
@@ -34,7 +35,7 @@ export function planAutomations(ctx: AutomationContext, settings: AutomationSett
         add("approvals", `candidate:${c.id}:${c.updatedAt}`, { reqId: r.id, candidateId: c.id, sourceVersion: c.updatedAt, title: "Candidate awaiting hiring manager review", detail: `${c.name} · ${r.title}` }, vars, [r.raisedByEmail]);
       }
       if (c.offerApprovalStatus === "Pending" && now - Date.parse(c.offerRequestedAt || c.updatedAt) >= settings.approvals.delayHours * 3600000) {
-        const recipients = ctx.users.filter((u) => u.active && u.role === "DepartmentHead" && u.departments.some((d) => d.toLowerCase() === r.department.toLowerCase())).map((u) => u.email);
+        const recipients = ctx.users.filter((u) => u.active && u.role === "DepartmentHead" && coversRequisitionScope(u, r)).map((u) => u.email);
         add("approvals", `offer:${c.id}:${c.offerRequestedAt || c.updatedAt}`, { reqId: r.id, candidateId: c.id, sourceVersion: c.offerRequestedAt || c.updatedAt, title: "Offer awaiting approval", detail: `${c.name} · ${r.title}` }, vars, recipients);
       }
       // Never replay old transitions on enable, and never send rejection/offer decisions through this workflow.

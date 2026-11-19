@@ -34,6 +34,7 @@ export {
   listInterviews,
   updateInterview,
   createFeedback,
+  updateFeedback,
   listFeedback,
   listAllFeedback,
   getPlan,

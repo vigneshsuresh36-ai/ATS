@@ -180,6 +180,9 @@ export async function updateInterviewCalendarEvent(
     attendeeEmails?: string[];
     summary?: string;
     description?: string;
+    location?: string;
+    video?: boolean;
+    formatDescription?: string;
   }
 ) {
   const calendar = await getCalendarClient();
@@ -214,18 +217,29 @@ export async function updateInterviewCalendarEvent(
     sendUpdates: "all",
     requestBody: {
       summary: patch.summary ?? existing.data.summary,
-      description: patch.description ?? existing.data.description,
+      description: patch.formatDescription ? [patch.formatDescription, (existing.data.description || "").split("\n").filter((line) => !/^(Format:|Call instructions:)/.test(line)).join("\n")].filter(Boolean).join("\n") : patch.description ?? existing.data.description,
+      location: patch.location ?? existing.data.location,
+      ...(patch.video === true && !existing.data.conferenceData ? { conferenceData: { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } } } : patch.video === false ? { conferenceData: null as unknown as NonNullable<typeof existing.data.conferenceData> } : {}),
       start: { dateTime: start.toISOString(), timeZone },
       end: { dateTime: end.toISOString(), timeZone },
       attendees,
     },
   });
 
+  let updated = res.data;
+  if (patch.video === true && !updated.hangoutLink && !updated.conferenceData?.entryPoints?.some((entry) => entry.entryPointType === "video")) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await delay(750);
+      updated = (await calendar.events.get({ calendarId: "primary", eventId })).data;
+      if (updated.hangoutLink || updated.conferenceData?.entryPoints?.some((entry) => entry.entryPointType === "video")) break;
+    }
+    if (!updated.hangoutLink && !updated.conferenceData?.entryPoints?.some((entry) => entry.entryPointType === "video")) throw new Error("Google Meet could not create a video link. Check the calendar event before retrying.");
+  }
   return {
     eventId,
     meetLink:
-      res.data.hangoutLink ||
-      res.data.conferenceData?.entryPoints?.find(
+      updated.hangoutLink ||
+      updated.conferenceData?.entryPoints?.find(
         (e) => e.entryPointType === "video"
       )?.uri,
   };

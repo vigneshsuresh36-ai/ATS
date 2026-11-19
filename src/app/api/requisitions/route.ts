@@ -1,4 +1,4 @@
-import { canViewScopedRequisition, coversRequisitionScope, departmentOptions, requiresSubDepartment } from "@/lib/requisitionScope";
+import { canViewScopedRequisition, scopeDepartments, coversRequisitionScope, departmentOptions, requiresSubDepartment } from "@/lib/requisitionScope";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { systemStatusAudit } from "@/lib/statusAudit";
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     } else if (user.role === "Recruiter") {
       requisitions = (await listRequisitions()).filter((r) => isAssignedRecruiter(r, user.email));
     } else if (user.role === "DepartmentHead") {
-      requisitions = user.departments?.length ? await listRequisitions({ departments: user.departments }) : [];
+      requisitions = scopeDepartments(user).length ? await listRequisitions({ departments: scopeDepartments(user) }) : [];
     } else {
       requisitions = await listRequisitions();
     }

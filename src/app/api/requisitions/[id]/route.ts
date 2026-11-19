@@ -1,3 +1,4 @@
+import { coversRequisitionScope, departmentOptions, requiresSubDepartment } from "@/lib/requisitionScope";
 import { jobDescriptionMark } from "@/lib/jobDescriptionFormatting";
 import { recruiterCollaborators } from "@/lib/recruiterAssignment";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
@@ -6,8 +7,8 @@ import { requestStatusAudit } from "@/lib/requestStatusAudit";
 import { readRecordActivity } from "@/lib/statusAudit";
 import { requireAdminDb } from "@/lib/firebaseAdmin";
 import { ApiError, errResponse, json, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
-import { addAudit, createNotifications, getRequisition, getSocialLinkForRecruiter, getUserByEmail, listCandidates, listUsers, updateRequisition } from "@/lib/db";
-import { canApprove, canRecruit, userCoversDepartment } from "@/lib/roles";
+import { addAudit, createNotifications, getOrg, getRequisition, getSocialLinkForRecruiter, getUserByEmail, listCandidates, listUsers, updateRequisition } from "@/lib/db";
+import { canApprove, canRecruit } from "@/lib/roles";
 import { canEditRequisitionPriority, isRequisitionClosed } from "@/lib/requisitionStatus";
 import type { Requisition } from "@/lib/types";
 import { hidePriorityForRole } from "@/lib/requisitionPriorityAccess";
@@ -22,18 +23,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const r = await getRequisition(id);
     if (!r) throw new ApiError(404, "Requisition not found.");
     await requireManagedRequisitionAccess(user, r);
-    if (
-      user.role === "HiringManager" &&
-      r.raisedByEmail !== user.email
-    ) {
-      throw new ApiError(403, "You can only view requisitions you raised.");
-    }
-    if (
-      user.role === "DepartmentHead" &&
-      !userCoversDepartment(user.departments, r.department)
-    ) {
-      throw new ApiError(403, "Not your department.");
-    }
     if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
@@ -73,6 +62,28 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }
 
+    async function organizationChanges() {
+      if (body.department === undefined && body.lob === undefined && body.subDepartment === undefined) return {};
+      const org = await getOrg();
+      const department = typeof body.department === "string" ? body.department.trim() : r!.department;
+      const lob = typeof body.lob === "string" ? body.lob.trim() : r!.lob;
+      const subDepartment = typeof body.subDepartment === "string" ? body.subDepartment.trim() : department === r!.department ? r!.subDepartment ?? "" : "";
+      const changed = department !== r!.department || lob !== r!.lob || subDepartment !== (r!.subDepartment ?? "");
+      if (!changed && (r!.accessScoped || !lob || user.role !== "Admin" || !org.businessUnits?.length)) return {};
+      const accessScoped = !!r!.accessScoped || !!org.businessUnits?.length;
+      if (accessScoped && user.role === "Recruiter") throw new ApiError(403, "Ask an Admin to change the organization scope.");
+      if (accessScoped && (!lob || !org.businessUnits?.includes(lob) || !department)) throw new ApiError(400, "Choose a business unit and department.");
+      if (department && !departmentOptions(org, lob || "").includes(department)) throw new ApiError(400, "Choose a department for the selected business unit.");
+      if (requiresSubDepartment(department, org) && !subDepartment) throw new ApiError(400, "Choose a Finance sub-department.");
+      if (subDepartment && !org.subDepartments?.some((item) => item.department === department && item.name === subDepartment)) throw new ApiError(400, "Choose a sub-department within the selected department.");
+      const scope = { department, lob, subDepartment, accessScoped };
+      if (user.role === "HiringManager" && !coversRequisitionScope(user, scope)) throw new ApiError(403, "This combination is outside your access scope.");
+      if (accessScoped && r!.status === "PendingApproval" && !(await listUsers()).some((member) => member.active && member.role === "DepartmentHead" && coversRequisitionScope(member, scope))) {
+        throw new ApiError(400, "Assign a Department Head for this combination before saving.");
+      }
+      return scope;
+    }
+
     if (body.action === "updateRoleSummary") {
       const canEditSummary = user.role === "Admin" || canRecruit(user.role) ||
         (user.role === "HiringManager" && r.raisedByEmail === user.email && r.status === "PendingApproval");
@@ -85,7 +96,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (![salaryMin, salaryMax, openings].every(Number.isSafeInteger) || salaryMin < 0 || salaryMax < salaryMin || openings < 1) throw new ApiError(400, "Enter a valid salary range and a positive number of openings.");
       const replacementCount = new Set((r.replacementEmployeeCode || "").split(/[\s,]+/).filter(Boolean)).size;
       if (r.requisitionType === "Replacement" && openings > replacementCount) throw new ApiError(400, "Openings cannot exceed the number of replacement employee codes.");
-      const updated = await updateRequisition(id, { department: body.department.trim(), ...(body.department.trim() !== r.department ? { subDepartment: "" } : {}), location: body.location.trim(), employment: body.employment.trim(), level: body.level.trim(), priority: body.priority.trim(), salaryMin, salaryMax, openings });
+      const updated = await updateRequisition(id, { ...await organizationChanges(), location: body.location.trim(), employment: body.employment.trim(), level: body.level.trim(), priority: body.priority.trim(), salaryMin, salaryMax, openings }, undefined, r);
       await addAudit({ action: "requisition.summary.update", actorEmail: user.email, actingAdminEmail: user.actingAdminEmail, entityType: "requisition", entityId: id, detail: "Role summary updated" });
       return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
     }
@@ -290,12 +301,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (!canApprove(user.role)) {
         throw new ApiError(403, "Not a department head.");
       }
-      if (
-        user.role === "DepartmentHead" &&
-        !userCoversDepartment(user.departments, r.department)
-      ) {
-        throw new ApiError(403, "This requisition is not in your department.");
-      }
       if (r.status !== "PendingApproval") {
         throw new ApiError(400, "Requisition is not pending approval.");
       }
@@ -347,11 +352,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     const patch: Record<string, unknown> = {};
     for (const k of [
       "title",
-      "department",
       "requisitionType",
       "businessJustification",
       "replacementEmployeeCode",
-      "lob",
       "location",
       "employment",
       "level",
@@ -364,8 +367,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     ]) {
       if (body[k] !== undefined) patch[k] = body[k];
     }
-    if (typeof patch.department === "string" && patch.department !== r.department) patch.subDepartment = "";
-    const updated = await updateRequisition(id, patch);
+    const updated = await updateRequisition(id, { ...patch, ...await organizationChanges() }, undefined, r);
     return json({ requisition: updated && hidePriorityForRole(updated, user.role) });
   } catch (e) {
     return errResponse(e);

@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
       const existing = customDepartments.find((item) => item.toLowerCase() === department.toLowerCase());
       if (!existing) throw new ApiError(404, "Custom department not found. Built-in departments cannot be edited or removed.");
       if ((org.subDepartments || []).some((item) => item.department.toLowerCase() === existing.toLowerCase())) throw new ApiError(409, "Remove the department’s sub-departments in Hiring Workflow before editing or removing it.");
+      if (org.departmentBusinessUnits?.some((link) => link.department === existing)) throw new ApiError(409, "Unlink this department from its business units first.");
       const [users, requisitions] = await Promise.all([listUsers(true), listRequisitions()]);
       const userCount = users.filter((member) => member.departments?.some((item) => item.toLowerCase() === existing.toLowerCase())).length;
       const requisitionCount = requisitions.filter((requisition) => requisition.department.toLowerCase() === existing.toLowerCase()).length;
@@ -101,6 +102,8 @@ export async function POST(req: NextRequest) {
     const name = String(body.name || "").trim();
     const employeeCode = String(body.employeeCode || "").trim();
     const rawRole = String(body.role || "").trim();
+    const phoneInput = body.phone === undefined ? undefined : String(body.phone).trim();
+    if (phoneInput && !/^\+?[0-9\s-]{7,16}$/.test(phoneInput)) throw new ApiError(400, "Enter a valid phone number, for example +91 98765 43210.");
     if (!employeeCode || !name || !email || !rawRole) {
       throw new ApiError(400, "Employee Code, Employee Name, Official Email ID, and Role Access are required.");
     }
@@ -144,6 +147,7 @@ export async function POST(req: NextRequest) {
       name,
       role,
       title: String(body.title || ROLE_LABELS[role]),
+      ...(phoneInput !== undefined ? { phone: phoneInput } : {}),
       departments: role === "Admin" ? allowedDepartments : departments,
       ...(accessScopes ? { accessScopes } : !scopedRole && existingAccount?.accessScopes !== undefined ? { accessScopes: [] } : {}),
       ...(role === "Recruiter" ? { managerEmail: user.email } : {}),

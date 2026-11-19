@@ -11,8 +11,6 @@ async function access(req: NextRequest, id: string) {
   const requisition = await getRequisition(candidate.reqId);
   if (!requisition) throw new ApiError(404, "Requisition not found.");
   await requireManagedRequisitionAccess(user, requisition);
-  if (user.role === "HiringManager" && requisition.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
-  if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === requisition.department.toLowerCase())) throw new ApiError(403, "Not your department.");
   if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
   return user;
 }

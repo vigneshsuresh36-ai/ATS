@@ -37,6 +37,9 @@ export function ScheduleView({
   initialReqId,
   initialCandidateId,
   initialRoundIndex,
+  rescheduleInterview,
+  onCancelReschedule,
+  onOpenCandidate,
 }: {
   reqs: Requisition[];
   officeLocations?: OrgSettings["officeLocations"];
@@ -46,16 +49,20 @@ export function ScheduleView({
   initialReqId?: string;
   initialCandidateId?: string;
   initialRoundIndex?: number;
+  rescheduleInterview?: Interview;
+  onCancelReschedule?: () => void;
+  /** Opens the candidate page; used when an interview row is clicked. */
+  onOpenCandidate?: (candidateId: string) => void;
 }) {
   const [reqId, setReqId] = useState(initialReqId || "");
   const [cands, setCands] = useState<Candidate[]>([]);
   const [candidateId, setCandidateId] = useState(initialCandidateId || "");
-  const [format, setFormat] = useState<InterviewFormat | "">("");
-  const [officeKey, setOfficeKey] = useState("");
-  const [phoneInstructions, setPhoneInstructions] = useState("");
+  const [format, setFormat] = useState<InterviewFormat | "">(rescheduleInterview?.format || "");
+  const [officeKey, setOfficeKey] = useState(() => { const match = officeLocations.find((item) => [...new Set([item.name, item.address, item.city].filter(Boolean))].join(", ") === rescheduleInterview?.location); return match ? JSON.stringify([match.name, match.city || ""]) : ""; });
+  const [phoneInstructions, setPhoneInstructions] = useState(rescheduleInterview?.phoneInstructions || "");
   const [datetime, setDatetime] = useState("");
-  const [interviewers, setInterviewers] = useState("");
-  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [interviewers, setInterviewers] = useState(rescheduleInterview?.interviewerEmails?.join(", ") || "");
+  const [durationMinutes, setDurationMinutes] = useState(rescheduleInterview?.durationMinutes || 60);
   const [slots, setSlots] = useState<{ start: string }[]>([]);
   const [slotNote, setSlotNote] = useState("");
   const [calendarEnabled, setCalendarEnabled] = useState(false);
@@ -66,6 +73,8 @@ export function ScheduleView({
   const [allCandidates, setAllCandidates] = useState<Candidate[]>([]);
   const [calendarDate, setCalendarDate] = useState(() => toDateKey(new Date()));
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (rescheduleInterview) document.getElementById("ats-schedule-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [rescheduleInterview]);
 
   useEffect(() => {
     apiFetch("/api/schedule")
@@ -165,7 +174,7 @@ export function ScheduleView({
     [allInterviews, calendarDate]
   );
   const office = officeLocations.find((item) => JSON.stringify([item.name, item.city || ""]) === officeKey);
-  const canSubmit =
+  const canSubmit = rescheduleInterview ? !!datetime && !!interviewers.trim() && !!format && (format !== "video" || calendarEnabled) && (format !== "in-person" || !!office) && (format !== "phone" || !!phoneInstructions.trim()) :
     !!format &&
     (format !== "video" || calendarEnabled) &&
     (format !== "in-person" || !!office) &&
@@ -184,10 +193,11 @@ export function ScheduleView({
     }
     setBusy(true);
     try {
+      if (rescheduleInterview && new Date(datetime).getTime() <= Date.now()) { alert("Choose a future date and time."); return; }
       const r = await apiFetch("/api/schedule", {
-        method: "POST",
+        method: rescheduleInterview ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(rescheduleInterview ? { id: rescheduleInterview.id, status: "Rescheduled", datetime: new Date(datetime).toISOString(), interviewerEmails: interviewers.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean), format, ...(format === "in-person" && office ? { officeName: office.name, officeCity: office.city || "" } : {}), ...(format === "phone" ? { phoneInstructions } : {}) } : {
           reqId,
           candidateId,
           datetime: new Date(datetime).toISOString(),
@@ -217,7 +227,7 @@ export function ScheduleView({
         }
         onDone();
       }
-    } finally {
+    } catch (error) { alert(error instanceof Error ? error.message : "Could not save the interview."); } finally {
       setBusy(false);
     }
   }
@@ -264,7 +274,22 @@ export function ScheduleView({
               const candidate = candidatesById.get(interview.candidateId);
               const requisition = requisitionsById.get(interview.reqId);
               return (
-                <div key={interview.id} style={calendarItem}>
+                <div
+                  key={interview.id}
+                  style={{ ...calendarItem, ...(onOpenCandidate ? { cursor: "pointer" } : {}) }}
+                  {...(onOpenCandidate ? {
+                    role: "link",
+                    tabIndex: 0,
+                    "aria-label": `Open ${candidate?.name || "candidate"}`,
+                    onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+                      if ((event.target as HTMLElement).closest("a, button, summary, details, input, select, textarea")) return;
+                      onOpenCandidate(interview.candidateId);
+                    },
+                    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpenCandidate(interview.candidateId); }
+                    },
+                  } : {})}
+                >
                   <div style={calendarTime}>{formatInterviewTime(interview.datetime)}</div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 700 }}>
@@ -306,7 +331,7 @@ export function ScheduleView({
           </p>
         </div>
       ) : <>
-      <div
+      <div id="ats-schedule-form"
         style={{
           display: "flex",
           alignItems: "flex-end",
@@ -318,11 +343,11 @@ export function ScheduleView({
       >
         <div>
           <h2 className="ats-heading-section">
-            Schedule interview
+            {rescheduleInterview ? "Reschedule interview" : "Schedule interview"}
           </h2>
           <p className="ats-heading-subtitle">
-            Book the next open round for an HM-approved candidate. Duplicate
-            rounds stay locked.
+            {rescheduleInterview ? "Choose a new time and interview format for the existing round." : "Book the next open round for an HM-approved candidate. Duplicate rounds stay locked."}
+            {rescheduleInterview && <> Previously scheduled: {new Date(rescheduleInterview.datetime).toLocaleString()}.</>}
           </p>
         </div>
         <div
@@ -336,7 +361,7 @@ export function ScheduleView({
             border: `1px solid ${calendarEnabled ? "#cfe3d4" : "#e6e2d6"}`,
           }}
         >
-          {calendarEnabled ? "Calendar invites on" : "Calendar invites off"}
+          {rescheduleInterview ? rescheduleInterview.calendarEventId ? "Existing calendar invitation will be updated" : calendarEnabled ? "A calendar invitation will be created" : "No calendar invitation will be sent" : calendarEnabled ? "Calendar invites on" : "Calendar invites off"}
         </div>
       </div>
 
@@ -357,6 +382,7 @@ export function ScheduleView({
             <select
               style={inp}
               value={reqId}
+              disabled={!!rescheduleInterview}
               onChange={(e) => {
                 setReqId(e.target.value);
                 setCandidateId("");
@@ -375,13 +401,14 @@ export function ScheduleView({
             <select
               style={inp}
               value={candidateId}
+              disabled={!!rescheduleInterview}
               onChange={(e) => setCandidateId(e.target.value)}
             >
               <option value="">—</option>
               {cands.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.email ? ` (${c.email})` : ""} — {prettyStatus(c.stage)}
+                  {c.email ? ` (${c.email})` : ""}{c.candidateId ? ` — ${c.candidateId}` : ""}
                 </option>
               ))}
             </select>
@@ -389,7 +416,7 @@ export function ScheduleView({
             {rounds.length > 0 && (
               <>
                 <label style={lab}>Round</label>
-                {!candidateId ? (
+                {rescheduleInterview ? <div style={mutedBox}>{rescheduleInterview.roundName || `Round ${rescheduleInterview.roundIndex || 1}`}</div> : !candidateId ? (
                   <p style={{ fontSize: 13, color: "#888", margin: "6px 0 0" }}>
                     Select a candidate to see available rounds.
                   </p>
@@ -412,7 +439,7 @@ export function ScheduleView({
                     ))}
                   </select>
                 )}
-                {candidateId && bookedRounds.size > 0 && (
+                {!rescheduleInterview && candidateId && bookedRounds.size > 0 && (
                   <p style={{ fontSize: 12, color: "#888", marginTop: 10 }}>
                     Already scheduled:{" "}
                     {[...bookedRounds]
@@ -476,6 +503,7 @@ export function ScheduleView({
                   step={15}
                   style={inp}
                   value={durationMinutes}
+                  disabled={!!rescheduleInterview}
                   onChange={(e) =>
                     setDurationMinutes(Number(e.target.value) || 60)
                   }
@@ -560,6 +588,7 @@ export function ScheduleView({
             gap: 10,
           }}
         >
+          {rescheduleInterview && onCancelReschedule && <button type="button" style={cancelBtn} disabled={busy} onClick={onCancelReschedule}>Cancel</button>}
           <button
             type="button"
             style={{
@@ -571,13 +600,18 @@ export function ScheduleView({
             disabled={!canSubmit || busy}
             onClick={schedule}
           >
-            {busy ? "Scheduling…" : "Schedule"}
+            {busy ? "Saving…" : rescheduleInterview ? "Reschedule interview" : "Schedule"}
           </button>
         </div>
       </section>
       </>}
 
       <style>{`
+        .ats-sched-grid > div > label { flex: 0 0 auto; }
+        .ats-sched-grid > div { justify-content: flex-start; }
+        .ats-sched-grid h3 { margin: 0 0 12px; }
+        .ats-sched-grid > div > p { margin: 5px 0 4px; font-size: 12px; line-height: 1.5; color: #6b706c; }
+        .ats-sched-when { margin-top: 12px; }
         @media (max-width: 800px) {
           .ats-sched-grid, .ats-sched-when {
             grid-template-columns: 1fr !important;

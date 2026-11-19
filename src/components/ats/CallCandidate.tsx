@@ -4,13 +4,13 @@ import { CALL_OUTCOMES, dialNumber, displayNumber, type CallOutcome } from "@/li
 import { formatDateTime } from "@/lib/dateFormat";
 import { MESSAGE_FOR_OUTCOME, MESSAGE_LABELS, buildMessage, mailLink, whatsappLink, type MessageKind } from "@/lib/messageTemplates";
 
-type CallEntry = { id: string; outcome: string; note: string; author: string; createdAt: string };
+type CallEntry = { id: string; type?: string; outcome: string; note: string; author: string; createdAt: string };
 type Props = {
   candidate: { id: string; name: string; phone?: string; email?: string; stage: string };
   roleTitle?: string;
   apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
   /** "icon" is the compact pipeline-row button. */
-  variant?: "default" | "compact";
+  variant?: "default" | "compact" | "icon";
 };
 const NO_CALL_STAGES = ["Rejected", "Social CV Reject", "Candidate Backed Out"];
 
@@ -72,8 +72,8 @@ export function CallCandidate({ candidate, apiFetch, roleTitle, variant = "defau
   }
 
   return <>
-    <button type="button" className={`ats-call-btn${variant === "compact" ? " is-compact" : ""}`} disabled={!!disabledReason} title={disabledReason || `Call ${candidate.name}`} aria-label={`Call ${candidate.name}`} onClick={() => setOpen(true)}>
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" /></svg>Call
+    <button type="button" className={`ats-call-btn${variant === "compact" ? " is-compact" : ""}${variant === "icon" ? " is-icon" : ""}`} disabled={!!disabledReason} title={disabledReason || `Call ${candidate.name}`} aria-label={`Call ${candidate.name}`} onClick={() => setOpen(true)}>
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" /></svg>{variant === "icon" ? null : "Call"}
     </button>
     <dialog ref={dialog} className="ats-call-dialog" aria-labelledby={`call-title-${candidate.id}`} onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === dialog.current) close(); }}>
       {open && <div className="ats-call-body">
@@ -107,7 +107,7 @@ export function CallCandidate({ candidate, apiFetch, roleTitle, variant = "defau
         <textarea id={`call-note-${candidate.id}`} value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="Example: confirmed notice period is 10 days" />
         {error && <p role="alert" className="ats-call-error">{error}</p>}
         <div className="ats-call-actions"><button type="button" onClick={close} disabled={saving}>Cancel</button><button type="button" className="is-primary" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save to history"}</button></div>
-        {calls.length > 0 && <div className="ats-call-history"><strong>Previous calls ({calls.length})</strong><ol>{calls.slice(0, 5).map((call) => <li key={call.id}><span><b>{call.outcome}</b> · {call.author}</span><time dateTime={call.createdAt}>{formatDateTime(call.createdAt, "Date not recorded")}</time>{call.note && <p>{call.note}</p>}</li>)}</ol></div>}
+        {calls.length > 0 && <div className="ats-call-history"><strong>Previous calls ({calls.length})</strong><ol>{calls.slice(0, 5).map((call) => <li key={call.id}><span><b>{call.type === "email" ? "Email" : "Call"} · {call.outcome}</b> · {call.author}</span><time dateTime={call.createdAt}>{formatDateTime(call.createdAt, "Date not recorded")}</time>{call.note && <p>{call.note}</p>}</li>)}</ol></div>}
       </div>}
     </dialog>
   </>;

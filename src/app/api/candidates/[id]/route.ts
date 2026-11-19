@@ -1,3 +1,4 @@
+import { canViewScopedRequisition } from "@/lib/requisitionScope";
 import { indianCityLabel } from "@/lib/indianCities";
 import { canReopenApplication } from "@/lib/candidateReopening";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
@@ -18,7 +19,6 @@ import {
   getPlan,
   getRequisition,
   listAllFeedback,
-  listCandidates,
   listFeedback,
   listInterviews,
   listRequisitions,
@@ -26,12 +26,13 @@ import {
   listUsers,
   reopenCandidateApplication,
   updateCandidate,
+  updateFeedback,
   updateInterview,
-  updateRequisition,
 } from "@/lib/db";
 import { canRecruit } from "@/lib/roles";
 import { getInterviewRounds } from "@/lib/interviewPlan";
 import { cancelInterviewCalendarEvent } from "@/lib/googleCalendar";
+import { transitionOffer } from "@/lib/db/offerCapacity";
 import type { CandidateStage } from "@/lib/types";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -66,8 +67,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const requisition = await getRequisition(c.reqId);
     if (!requisition) throw new ApiError(404, "Requisition not found.");
     await requireManagedRequisitionAccess(user, requisition);
-    if (user.role === "HiringManager" && requisition.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
-    if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === requisition.department.toLowerCase())) throw new ApiError(403, "Not your department.");
     if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
     const [events, feedback, interviews, allInterviews, allFeedback, allRequisitions] = await Promise.all([
       listStageEvents(id),
@@ -78,9 +77,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       listRequisitions(),
     ]);
     const reqTitles = new Map(allRequisitions.map((item) => [item.id, item.title]));
-    const historicalInterviews = allInterviews.filter((item) => item.reqId !== c.reqId);
+    const historyReqIds = new Set(allRequisitions.filter((item) => item.id !== c.reqId && canViewScopedRequisition(user, item)).map((item) => item.id));
+    const historicalInterviews = allInterviews.filter((item) => historyReqIds.has(item.reqId));
     const historicalIds = new Set(historicalInterviews.map((item) => item.id));
-    const historyFeedback = allFeedback.filter((item) => item.candidateId === id && item.reqId !== c.reqId);
+    const historyFeedback = allFeedback.filter((item) => item.candidateId === id && historyReqIds.has(item.reqId));
     const interviewHistory: {
       reqId: string;
       reqTitle: string;
@@ -131,18 +131,17 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     const r = await getRequisition(c.reqId);
     if (!r) throw new ApiError(404, "Requisition missing.");
     await requireManagedRequisitionAccess(user, r);
-    if (user.role === "HiringManager" && r.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
-    if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === r.department.toLowerCase())) throw new ApiError(403, "Not your department.");
     if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
+    const body = await req.json();
+    const fulfilledOfferAction = r.status === "Position Fulfilled" && (body.action === "offerApprove" || body.action === "offerReject" || (c.offerApprovalStatus === "Approved" && (body.action === "candidateBackOut" || (body.action === "stage" && ["Offered", "Onboarded"].includes(body.stage)))));
     if (
       r.status !== "Approved" &&
       r.status !== "Position Reopened" &&
       r.status !== "Partially Fulfilled" &&
-      user.role !== "Admin"
+      user.role !== "Admin" && !fulfilledOfferAction
     ) {
       throw new ApiError(403, "Requisition not approved.");
     }
-    const body = await req.json();
     const isOfferDecision = body.action === "offerApprove" || body.action === "offerReject";
     const isFeedbackAction = body.action === "feedback";
     if (!canRecruit(user.role) && user.role !== "HiringManager" && !isOfferDecision && !isFeedbackAction) {
@@ -176,16 +175,13 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       }
 
       const reason = String(body.reason || "").trim();
-      const updated = await updateCandidate(
-        id,
-        {
+      const backoutPatch = {
           stage: "Candidate Backed Out",
           backedOutAt: new Date().toISOString(),
           backedOutBy: user.email,
           backOutReason: reason || undefined,
-        },
-        { byEmail: user.email, from: c.stage, to: "Candidate Backed Out" }
-      );
+        } as const;
+      const updated = c.offerApprovalStatus === "Approved" ? (await transitionOffer(id, c.reqId, "backout", backoutPatch, user.email)).candidate : await updateCandidate(id, backoutPatch, { byEmail: user.email, from: c.stage, to: "Candidate Backed Out" });
       const interviews = await listInterviews({ candidateId: id, reqId: c.reqId });
       const activeInterviews = interviews.filter((interview) =>
         ["Scheduled", "Rescheduled", "Reschedule Requested"].includes(interview.status)
@@ -447,7 +443,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       return json({ candidate: updated });
     }
 
-    if (body.action === "feedback") {
+    if (body.action === "feedback" || body.action === "updateFeedback") {
+      const updating = body.action === "updateFeedback";
+      if (updating && !canRecruit(user.role)) throw new ApiError(403, "Not allowed.");
       const interviewId = body.interviewId
         ? String(body.interviewId)
         : undefined;
@@ -458,22 +456,36 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (!canRecruit(user.role) && !hmOwner && !isAssignedInterviewer) {
         throw new ApiError(403, "Only the assigned interviewer can submit this feedback.");
       }
-      if (!interviewId || !interview || interview.candidateId !== id) {
+      if (!interviewId || !interview || interview.candidateId !== id || interview.reqId !== c.reqId) {
         throw new ApiError(400, "Select the scheduled interview for this feedback.");
       }
       const questions = (interview.feedbackForm?.questions || []).map(normalizeQuestion);
       const answers = Array.isArray(body.customAnswers) ? body.customAnswers : [];
       if (answers.length !== questions.length || answers.some((item: { question?: unknown; answer?: unknown }, index: number) => item.question !== questions[index].label || typeof item.answer !== "string" || !validFeedbackAnswer(questions[index], item.answer))) throw new ApiError(400, "The feedback form has changed. Refresh the page and try again.");
-      const fb = await createFeedback({
+      const changes = {
         customAnswers: questions.map((question, index) => ({ question: question.label, answer: answers[index].answer.trim() })),
+        rating: Number(body.rating) || 0,
+        recommendation: String(body.recommendation || ""),
+        feedback: String(body.feedback || ""),
+      };
+      if (updating) {
+        const entry = (await listFeedback(id)).find((item) =>
+          item.id === body.feedbackId && item.interviewId === interviewId && item.reqId === c.reqId
+        );
+        if (!entry) throw new ApiError(404, "Interview feedback not found.");
+        if ((entry.updatedAt ?? null) !== body.feedbackUpdatedAt) {
+          throw new ApiError(409, "This feedback has changed. Reopen it and try again.");
+        }
+        const feedback = await updateFeedback(entry, changes, user.email);
+        return json({ feedback });
+      }
+      const fb = await createFeedback({
+        ...changes,
         candidateId: id,
         reqId: c.reqId,
         interviewId,
         interviewer: String(body.interviewer || user.name),
         stage: String(body.stage || c.stage),
-        rating: Number(body.rating) || 0,
-        recommendation: String(body.recommendation || ""),
-        feedback: String(body.feedback || ""),
         createdBy: user.email,
       });
       if (interviewId) {
@@ -497,12 +509,18 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (!canRecruit(user.role) && !hmOwner) {
         throw new ApiError(403, "Not allowed.");
       }
+      if (body.expectedStage === "On Hold" && c.stage !== "On Hold") throw new ApiError(409, "This candidate's status has changed. Refresh and try again.");
       if (c.stage === "PendingHMApproval") {
         throw new ApiError(403, "Candidate still pending HM approval.");
       }
       const decision = String(body.decision || "");
       let stage: CandidateStage = c.stage;
       const interviews = await listInterviews({ candidateId: id, reqId: c.reqId });
+      if (c.stage === "On Hold" && decision === "Advance") {
+        const active = interviews.filter((interview) => interview.status !== "Cancelled");
+        const feedbackIds = new Set((await listFeedback(id)).map((entry) => entry.interviewId));
+        if (!active.length || active.some((interview) => interview.status === "Reschedule Requested" || !feedbackIds.has(interview.id))) throw new ApiError(400, "Complete the interview and feedback before selecting this candidate.");
+      }
       const maxRound = interviews
         .filter((iv) => iv.status !== "Cancelled")
         .reduce((m, iv) => Math.max(m, iv.roundIndex || 1), 0);
@@ -630,7 +648,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (offeredVariablePeriod !== "Monthly" && offeredVariablePeriod !== "Annually") {
         throw new ApiError(400, "Variable CTC period must be Monthly or Annually.");
       }
-      const updated = await updateCandidate(id, {
+      const { candidate: updated, requisition: updatedRequisition } = await transitionOffer(id, r.id, "request", {
         stage: "OfferApprovalPending",
         tentativeDoj,
         offeredSalary: offeredFixedCtc,
@@ -646,33 +664,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         offerDecisionBy: undefined,
         offerDecisionAt: undefined,
         offerRejectReason: undefined,
-      });
-      let updatedRequisition = r;
-      const reservedStages = new Set([
-        "OfferApprovalPending",
-        "OfferApproved",
-        "Offered",
-        "Onboarded",
-      ]);
-      const reservedCandidates = await listCandidates(r.id);
-      const reservedCount = reservedCandidates.filter(
-        (candidate) =>
-          candidate.offerApprovalStatus === "Pending" ||
-          candidate.offerApprovalStatus === "Approved" ||
-          reservedStages.has(candidate.stage)
-      ).length;
-      const fulfillmentStatus =
-        reservedCount >= Math.max(1, r.openings)
-          ? "Position Fulfilled"
-          : "Partially Fulfilled";
-      if (
-        r.status === "Approved" ||
-        r.status === "Position Reopened" ||
-        r.status === "Partially Fulfilled"
-      ) {
-        updatedRequisition =
-          (await updateRequisition(r.id, { status: fulfillmentStatus }, systemStatusAudit(`Offer request reserved ${reservedCount} of ${Math.max(1, r.openings)} openings.`), r)) || r;
-      }
+      }, user.email);
       await addAudit({
         action: "candidate.offer_request",
         actorEmail: user.email,
@@ -688,11 +680,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (user.role !== "DepartmentHead" && user.role !== "Admin") {
         throw new ApiError(403, "Only a Department Head can decide offer approval.");
       }
+      if (user.role === "DepartmentHead" && !canViewScopedRequisition(user, r)) throw new ApiError(403, "This offer is outside your department scope.");
       if (c.offerApprovalStatus !== "Pending") {
         throw new ApiError(400, "Candidate has no pending offer approval request.");
-      }
-      if (user.role === "DepartmentHead" && !user.departments?.some((d) => d.toLowerCase() === r.department.toLowerCase())) {
-        throw new ApiError(403, "This offer is outside your department.");
       }
       const offerRejectReason = body.action === "offerReject"
         ? String(body.reason || "").trim()
@@ -751,34 +741,14 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       const nextStage: CandidateStage = body.action === "offerApprove"
         ? "OfferApproved"
         : "Selected";
-      const updated = await updateCandidate(id, {
+      const { candidate: updated, requisition: updatedRequisition } = await transitionOffer(id, r.id, body.action === "offerApprove" ? "approve" : "reject", {
         ...approvedOfferTerms,
         stage: nextStage,
         offerApprovalStatus,
         offerDecisionBy: user.email,
         offerDecisionAt: new Date().toISOString(),
         offerRejectReason,
-      });
-      let updatedRequisition = r;
-      if (body.action === "offerApprove") {
-        const filledStages = new Set(["OfferApproved", "Offered", "Onboarded"]);
-        const candidates = await listCandidates(r.id);
-        const filledCount = candidates.filter((candidate) =>
-          filledStages.has(candidate.stage)
-        ).length;
-        const fulfillmentStatus =
-          filledCount >= Math.max(1, r.openings)
-            ? "Position Fulfilled"
-            : "Partially Fulfilled";
-        if (
-          r.status === "Approved" ||
-          r.status === "Position Reopened" ||
-          r.status === "Partially Fulfilled"
-        ) {
-          updatedRequisition =
-            (await updateRequisition(r.id, { status: fulfillmentStatus }, systemStatusAudit(`Offer release filled ${filledCount} of ${Math.max(1, r.openings)} openings.`), r)) || r;
-        }
-      }
+      }, user.email);
       await addAudit({
         action: `candidate.offer_${body.action === "offerApprove" ? "approve" : "reject"}`,
         actorEmail: user.email,

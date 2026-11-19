@@ -1,4 +1,4 @@
-import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { canViewScopedRequisition, scopeDepartments } from "@/lib/requisitionScope";
 import { indianCityLabel } from "@/lib/indianCities";
 import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
@@ -28,10 +28,7 @@ export async function GET(req: NextRequest) {
       const r = await getRequisition(reqId);
       if (!r) throw new ApiError(404, "Requisition not found.");
       if (!canViewScopedRequisition(user, r)) {
-        throw new ApiError(403, "Not your requisition.");
-      }
-      if (user.role === "DepartmentHead" && !user.departments.some((department) => department.toLowerCase() === r.department.toLowerCase())) {
-        throw new ApiError(403, "Not your department.");
+        throw new ApiError(403, "This requisition is outside your access scope.");
       }
       if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
         throw new ApiError(403, "This requisition is not assigned to you.");
@@ -51,7 +48,7 @@ export async function GET(req: NextRequest) {
           : user.role === "HiringManager"
           ? { raisedByEmail: user.email }
           : user.role === "DepartmentHead"
-            ? { departments: user.departments || [] }
+            ? { departments: scopeDepartments(user) }
             : undefined
       );
       const teamEmails = user.role === "Admin"

@@ -21,16 +21,12 @@ export async function GET(req: NextRequest) {
       reqs = reqs.filter((requisition) => !requisition.recruiterEmail || teamEmails.has(requisition.recruiterEmail));
       const ids = new Set(reqs.map((requisition) => requisition.id));
       cands = cands.filter((candidate) => ids.has(candidate.reqId));
-    } else if (user.role === "HiringManager") {
-      reqs = reqs.filter((r) => r.raisedByEmail === user.email);
+    } else if (user.role === "HiringManager" || user.role === "DepartmentHead" || user.role === "Employee") {
+      reqs = reqs.filter((r) => canViewScopedRequisition(user, r));
       const ids = new Set(reqs.map((r) => r.id));
       cands = cands.filter((c) => ids.has(c.reqId));
     } else if (user.role === "Recruiter") {
       reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
-      const ids = new Set(reqs.map((r) => r.id));
-      cands = cands.filter((c) => ids.has(c.reqId));
-    } else if (user.role === "DepartmentHead") {
-      reqs = reqs.filter((r) => user.departments.some((department) => department.toLowerCase() === r.department.toLowerCase()));
       const ids = new Set(reqs.map((r) => r.id));
       cands = cands.filter((c) => ids.has(c.reqId));
     }

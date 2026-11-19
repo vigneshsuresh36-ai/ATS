@@ -7,7 +7,7 @@ import { AccessScopePicker } from "./AccessScopePicker";
 import type { AppUser, OrgSettings, RequisitionAccessScope, Role } from "@/lib/types";
 
 type TeamSortField = "employeeCode" | "name" | "email" | "role" | "departments" | "active";
-type UserDraft = { employeeCode: string; role: Role; departments: string[]; accessScopes?: RequisitionAccessScope[] };
+type UserDraft = { employeeCode: string; phone: string; role: Role; departments: string[]; accessScopes?: RequisitionAccessScope[] };
 type BulkPreviewRow = {
   row: number;
   employeeCode: string;
@@ -77,6 +77,7 @@ export function TeamView({
   const [savingEmail, setSavingEmail] = useState<string | null>(null);
   const [rowMessages, setRowMessages] = useState<Record<string, string>>({});
   const [employeeCode, setEmployeeCode] = useState("");
+  const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("HiringManager");
@@ -136,6 +137,7 @@ export function TeamView({
       ...current,
       [user.email]: {
         employeeCode: current[user.email]?.employeeCode ?? user.employeeCode ?? "",
+        phone: current[user.email]?.phone ?? user.phone ?? "",
         role: current[user.email]?.role ?? user.role,
         departments: current[user.email]?.departments ?? user.departments ?? [],
         accessScopes: current[user.email]?.accessScopes ?? user.accessScopes,
@@ -154,6 +156,7 @@ export function TeamView({
 
   function rowNeedsSave(user: AppUser, draft: UserDraft) {
     return draft.employeeCode.trim() !== (user.employeeCode || "") ||
+      draft.phone.trim() !== (user.phone || "") ||
       draft.role !== user.role ||
       JSON.stringify(draft.accessScopes ?? []) !== JSON.stringify(user.accessScopes ?? []) ||
       !sameDepartments(draft.departments, user.departments || []);
@@ -162,6 +165,7 @@ export function TeamView({
   async function saveUserAccess(user: AppUser) {
     const draft = drafts[user.email] || {
       employeeCode: user.employeeCode || "",
+      phone: user.phone || "",
       role: user.role,
       departments: user.departments || [],
       accessScopes: user.accessScopes,
@@ -184,7 +188,7 @@ export function TeamView({
       const response = await apiFetch("/api/team", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "update", employeeCode: draft.employeeCode.trim(), name: user.name, email: user.email, role: draft.role, departments: draft.departments, accessScopes: draft.accessScopes }),
+        body: JSON.stringify({ intent: "update", employeeCode: draft.employeeCode.trim(), phone: draft.phone.trim(), name: user.name, email: user.email, role: draft.role, departments: draft.departments, accessScopes: draft.accessScopes }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not update team member.");
@@ -216,11 +220,12 @@ export function TeamView({
       const response = await apiFetch("/api/team", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "create", employeeCode, name, email, role, departments, ...(needsScope(role) ? { accessScopes } : {}) }),
+        body: JSON.stringify({ intent: "create", employeeCode, name, email, phone: phone.trim(), role, departments, ...(needsScope(role) ? { accessScopes } : {}) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not add team member.");
       setEmployeeCode("");
+      setPhone("");
       setName("");
       setEmail("");
       setRole("HiringManager");
@@ -448,10 +453,11 @@ export function TeamView({
         <div className="ats-team-table-wrap"><table className="ats-team-table">
           <thead><tr>
             {([ ["employeeCode", "Employee Code"], ["name", "Employee Name"], ["email", "Official Email ID"], ["role", "Role Access"], ["departments", "Access scope"], ["active", "Status"] ] as const).map(([field, label]) => <th key={field} scope="col" aria-sort={sortField === field ? sortDirection === "asc" ? "ascending" : "descending" : "none"}><button type="button" onClick={() => changeSort(field)}>{label}<span aria-hidden="true">{sortField === field ? sortDirection === "asc" ? " ↑" : " ↓" : " ↕"}</span></button></th>)}
+            <th scope="col">Phone</th>
             <th scope="col">Actions</th>
           </tr></thead>
           <tbody>{pageUsers.map((user) => {
-            const draft = drafts[user.email] || { employeeCode: user.employeeCode || "", role: user.role, departments: user.departments || [], accessScopes: user.accessScopes };
+            const draft = drafts[user.email] || { employeeCode: user.employeeCode || "", phone: user.phone || "", role: user.role, departments: user.departments || [], accessScopes: user.accessScopes };
             const self = user.email.toLowerCase() === currentEmail.toLowerCase();
             const changed = rowNeedsSave(user, draft);
             return <tr key={user.email}>
@@ -461,6 +467,7 @@ export function TeamView({
               <td><select className="ats-team-role-select" aria-label={`Role Access for ${user.name}`} disabled={self} value={draft.role} onChange={(event) => updateDraft(user, { role: event.target.value as Role })}>{ROLES.filter((item) => item !== "Employee" || employeeReferralsEnabled || user.role === "Employee").map((item) => <option key={item} value={item}>{roleLabel(item)}</option>)}</select></td>
               <td>{org && needsScope(draft.role) ? <AccessScopePicker org={org} value={draft.accessScopes || []} disabled={self} onChange={(scopes) => updateDraft(user, { accessScopes: scopes })} /> : <DepartmentPicker options={allDepartments} selected={draft.departments} required={requiresDepartment(draft.role)} disabled={self} label={`Department for ${user.name}`} onToggle={(department) => updateDepartment(user, draft, department)} />}</td>
               <td><span className={`ats-team-status${user.active ? " is-active" : " is-inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td>
+              <td><input className="ats-team-code-input" type="tel" inputMode="tel" aria-label={`Phone for ${user.name}`} value={draft.phone} onChange={(event) => updateDraft(user, { phone: event.target.value })} placeholder="+91 98765 43210" /></td>
               <td><div className="ats-team-row-actions">
                 {changed && <button type="button" className="ats-team-save" disabled={savingEmail === user.email || !draft.employeeCode.trim() || (needsScope(draft.role) ? !draft.accessScopes?.length : requiresDepartment(draft.role) && !draft.departments.length)} onClick={() => void saveUserAccess(user)}>{savingEmail === user.email ? "Saving…" : "Save"}</button>}
                 {onActAs && user.active && <button type="button" className="ats-team-secondary" onClick={() => onActAs(user)}>Act as</button>}
@@ -482,6 +489,7 @@ export function TeamView({
             <label>Employee Code *<input required value={employeeCode} onChange={(event) => setEmployeeCode(event.target.value)} placeholder="e.g. HB-1042" /></label>
             <label>Employee Name *<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" /></label>
             <label>Official Email ID *<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" /></label>
+            <label>Phone number<input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+91 98765 43210" /></label>
             <label>Role Access *<select required value={role} onChange={(event) => setRole(event.target.value as Role)}>{ROLES.filter((item) => item !== "Employee" || employeeReferralsEnabled).map((item) => <option key={item} value={item}>{roleLabel(item)}</option>)}</select></label>
             {org && needsScope(role) ? <div className="ats-team-add-departments"><span>Access scope *</span><AccessScopePicker org={org} value={accessScopes} onChange={setAccessScopes} /></div> : <div className="ats-team-add-departments"><span>Department{requiresDepartment(role) ? " *" : " (optional)"}</span><DepartmentPicker options={allDepartments} selected={departments} required={requiresDepartment(role)} label="Select departments" onToggle={(department) => setDepartments((current) => current.includes(department) ? current.filter((item) => item !== department) : [...current, department])} /></div>}
           </div>

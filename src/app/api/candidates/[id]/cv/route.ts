@@ -2,7 +2,6 @@ import { isAssignedRecruiter } from "@/lib/recruiterAssignment";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import { getCandidate, getRequisition } from "@/lib/db";
-import { userCoversDepartment } from "@/lib/roles";
 import { adminStorage } from "@/lib/firebaseAdmin";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -27,19 +26,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const r = await getRequisition(c.reqId);
     if (!r) throw new ApiError(404, "Requisition not found.");
     await requireManagedRequisitionAccess(user, r);
-
-    if (
-      user.role === "HiringManager" &&
-      r.raisedByEmail !== user.email
-    ) {
-      throw new ApiError(403, "Not your requisition.");
-    }
-    if (
-      user.role === "DepartmentHead" &&
-      !userCoversDepartment(user.departments, r.department)
-    ) {
-      throw new ApiError(403, "Not your department.");
-    }
     if (user.role === "Recruiter" && !isAssignedRecruiter(r, user.email)) {
       throw new ApiError(403, "This requisition is not assigned to you.");
     }

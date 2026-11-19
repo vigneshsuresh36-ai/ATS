@@ -1,4 +1,4 @@
-import { canViewScopedRequisition } from "@/lib/requisitionScope";
+import { canViewScopedRequisition, scopeDepartments } from "@/lib/requisitionScope";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireUser } from "@/lib/auth";
 import { getRequisition, listCandidates, listRequisitions, listUsers } from "@/lib/db";
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     }
     const pending = user.role === "Admin"
       ? await listRequisitions({ status: "PendingApproval" })
-      : await listRequisitions({ departments: user.departments || [], status: "PendingApproval" });
+      : await listRequisitions({ departments: scopeDepartments(user), status: "PendingApproval" });
     const requisitions = pending.filter((request) => canViewScopedRequisition(user, request));
     let candidates = (await listCandidates()).filter((candidate) => candidate.offerApprovalStatus === "Pending");
     if (user.role === "Admin") {

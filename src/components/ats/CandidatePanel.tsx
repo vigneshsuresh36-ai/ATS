@@ -6,9 +6,12 @@ import { HiringAssistant } from "./HiringAssistant";
 import { CandidateCommunicationHistory } from "./CandidateCommunicationHistory";
 import { CandidateComments } from "./CandidateComments";
 import { VoiceDictation } from "./VoiceDictation";
+import { CallCandidate } from "./CallCandidate";
+import { EmailCandidate } from "./EmailCandidate";
+import { CandidateStatusMenu } from "./CandidateStatusMenu";
 import { DateTimeField } from "./DateTimeField";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { getInterviewRounds } from "@/lib/interviewPlan";
 import { canRecruit } from "@/lib/roles";
@@ -73,7 +76,7 @@ export function CandidatePanel({
   onScheduleRound?: (roundIndex: number) => void;
   /** "drawer" shows only one working section for use in a side panel. */
   mode?: "page" | "drawer";
-  section?: "feedback" | "debrief" | "offer";
+  section?: "feedback" | "update-feedback" | "debrief" | "offer";
 }) {
   const c = data.candidate;
   const requisition = data.requisition;
@@ -101,11 +104,31 @@ export function CandidatePanel({
     ...(c.joiningStatusUpdatedAt ? [{ at: c.joiningStatusUpdatedAt, title: `Joining status: ${c.joiningStatus || "updated"}`, detail: "" }] : []),
   ].filter((item) => item.at).sort((a, b) => b.at.localeCompare(a.at));
   const [stage, setStage] = useState(c.stage);
-  const [fb, setFb] = useState("");
-  const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
+  const updatingFeedback = mode === "drawer" && section === "update-feedback";
+  const editableFeedback = updatingFeedback && canRecruit(role)
+    ? (data.feedback || []).filter((entry) =>
+        entry.reqId === c.reqId && data.interviews.some((interview) => interview.id === entry.interviewId)
+      ).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : [];
+  const [editingFeedbackId, setEditingFeedbackId] = useState(editableFeedback[0]?.id || "");
+  const editingFeedback = editableFeedback.find((entry) => entry.id === editingFeedbackId);
+  const [fb, setFb] = useState(editingFeedback?.feedback ?? "");
+  const [customAnswers, setCustomAnswers] = useState<Record<number, string>>(
+    () => Object.fromEntries((editingFeedback?.customAnswers || []).map((item, index) => [index, item.answer]))
+  );
   const [feedbackFor, setFeedbackFor] = useState("");
-  const [rating, setRating] = useState(3);
-  const [rec, setRec] = useState("Yes");
+  const [rating, setRating] = useState(editingFeedback?.rating ?? 0);
+  const [rec, setRec] = useState(editingFeedback?.recommendation ?? "");
+  const [savingFeedback, setSavingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
+
+  function selectFeedback(entry: InterviewFeedback) {
+    setEditingFeedbackId(entry.id);
+    setFb(entry.feedback);
+    setRating(entry.rating);
+    setRec(entry.recommendation);
+    setCustomAnswers(Object.fromEntries((entry.customAnswers || []).map((item, index) => [index, item.answer])));
+  }
   const [busy, setBusy] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [reopenError, setReopenError] = useState("");
@@ -139,7 +162,6 @@ export function CandidatePanel({
   const [joiningBonus, setJoiningBonus] = useState(c.joiningBonus || "0");
   const [relocationAssistance, setRelocationAssistance] = useState(c.relocationAssistance ?? false);
   const [rescheduleTimes, setRescheduleTimes] = useState<Record<string, string>>({});
-  const [selectedRescheduleInterviewId, setSelectedRescheduleInterviewId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -166,11 +188,6 @@ export function CandidatePanel({
   const rescheduleEligibleInterviews = (data.interviews || []).filter(
     (iv) => iv.status === "Scheduled" || iv.status === "Rescheduled"
   );
-  const rescheduleTargetId = rescheduleEligibleInterviews.some(
-    (iv) => iv.id === selectedRescheduleInterviewId
-  )
-    ? selectedRescheduleInterviewId
-    : rescheduleEligibleInterviews[0]?.id || "";
   const feedbackList = data.feedback || [];
   const maxScheduledRound = activeInterviews.reduce(
     (m, iv) => Math.max(m, iv.roundIndex || 1),
@@ -232,6 +249,10 @@ export function CandidatePanel({
       (iv) => !feedbackList.some((f) => f.interviewId === iv.id)
     ) || activeInterviews[activeInterviews.length - 1];
   const showFeedbackForm = !!pendingInterview && !feedbackList.some((f) => f.interviewId === pendingInterview.id);
+  const feedbackInterview = updatingFeedback
+    ? data.interviews.find((interview) => interview.id === editingFeedback?.interviewId)
+    : pendingInterview;
+  const showFeedbackEditor = updatingFeedback ? !!editingFeedback && !!feedbackInterview : showFeedbackForm;
   const showDebrief =
     (canRecruit(role) || !!isHmOwner) &&
     (c.stage === "Debrief" ||
@@ -242,26 +263,57 @@ export function CandidatePanel({
   const inDrawer = mode === "drawer";
   type Tab = "interviews" | "offer" | "cv" | "activity";
   const [tab, setTab] = useState<Tab>(canRequestOffer || canDecideOffer ? "offer" : "interviews");
+  const visibleTab = role === "DepartmentHead" && tab === "activity" ? "interviews" : tab;
   type Block = "stage" | "feedback" | "debrief" | "interviews" | "offer" | "joining" | "activity" | "cv";
-  const blockTab: Record<Block, Tab> = { stage: "interviews", feedback: "interviews", debrief: "interviews", interviews: "interviews", offer: "offer", joining: "offer", activity: "activity", cv: "cv" };
+  const blockTab: Record<Block, Tab> = { stage: "interviews", feedback: "interviews", debrief: "interviews", interviews: "activity", offer: "offer", joining: "offer", activity: "activity", cv: "cv" };
   const show = (block: Block) => inDrawer
-    ? (section === "feedback" && block === "feedback") || (section === "debrief" && (block === "debrief" || block === "feedback")) || (section === "offer" && block === "offer")
-    : blockTab[block] === tab;
+    ? ((section === "feedback" || section === "update-feedback") && block === "feedback") || (section === "debrief" && (block === "debrief" || block === "feedback")) || (section === "offer" && block === "offer")
+    : blockTab[block] === visibleTab;
   function goTo(next: Tab, anchor?: string) {
     setTab(next);
     if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
-  const nextStep: { title: string; text?: string; label?: string; action?: () => void } | null = inDrawer ? null
-    : showFeedbackForm && canRecruit(role) ? { title: "Add interview feedback", text: `Feedback for ${pendingInterview?.roundName || "the latest round"} is still missing.`, label: "Add feedback", action: () => goTo("interviews", "ats-feedback-anchor") }
-    : showDebrief ? { title: "Decide: advance, hold or reject", text: "All feedback for the latest round is in.", label: "Open decision", action: () => goTo("interviews", "ats-debrief-anchor") }
-    : canRequestOffer ? { title: "Request offer approval", text: "All interview rounds are complete.", label: "Request offer", action: () => goTo("offer") }
-    : canDecideOffer ? { title: "An offer is waiting for your decision", label: "Review offer", action: () => goTo("offer") }
-    : canScheduleNext ? { title: `Schedule Round ${nextRoundIndex}${nextRoundMeta?.name ? `: ${nextRoundMeta.name}` : ""}`, label: "Schedule", action: () => onScheduleRound?.(nextRoundIndex) }
-    : c.stage === "PendingHMApproval" ? (isHmOwner || role === "Admin"
-      ? { title: "Approve or reject this candidate", label: "Review", action: () => goTo("interviews") }
-      : { title: "Waiting for hiring manager approval", text: "Interviews can be scheduled once the hiring manager approves." })
+  type StepAction = { label: string; onClick: () => void; tone?: "primary" | "good" | "warn" | "bad"; disabled?: boolean };
+  async function decideDebrief(dec: "Advance" | "Hold" | "Reject") {
+    const r = await apiFetch(`/api/candidates/${c.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "debrief", decision: dec }),
+    });
+    const d = await r.json();
+    if (!r.ok) alert(d.error);
+    else {
+      if (dec === "Reject") signalHoneyBadgerMood("sad");
+      onRefresh();
+    }
+  }
+  const nextStep: { title: string; text?: string; actions?: StepAction[] } | null = inDrawer ? null
+    : canReviewSocialCv ? { title: "Review this social CV", text: "Move it to hiring manager approval, or reject it.", actions: [
+      { label: "Select CV", tone: "good", disabled: busy, onClick: () => void reviewSocialCv("PendingHMApproval") },
+      { label: "Reject CV", tone: "bad", disabled: busy, onClick: () => void reviewSocialCv("Social CV Reject") }] }
+    : c.stage === "PendingHMApproval" && (isHmOwner || role === "Admin") ? { title: "Approve or reject this candidate", text: "Interviews can be scheduled once the hiring manager approves.", actions: [
+      { label: "Approve", tone: "good", onClick: () => void hmDecide("hmApprove") },
+      { label: "Reject", tone: "bad", onClick: () => void hmDecide("hmReject") }] }
+    : canRecruit(role) && (data.interviews || []).some((iv) => iv.status === "Reschedule Requested") ? { title: `${(data.interviews || []).find((iv) => iv.status === "Reschedule Requested")?.rescheduleRequestedBy || "Someone"} requested a reschedule`, text: "Coordinate with the candidate and the panel, then set the new time under Activity & comments.", actions: [
+      { label: "Set new time", tone: "primary", onClick: () => goTo("activity") }] }
+    : showFeedbackForm && canRecruit(role) ? { title: "Add interview feedback", text: `Feedback for ${pendingInterview?.roundName || "the latest round"} is still missing.`, actions: [
+      { label: "Add feedback", tone: "primary", onClick: () => goTo("interviews", "ats-feedback-anchor") }] }
+    : showDebrief ? { title: "Decide: advance, hold or reject", text: "All feedback for the latest round is in.", actions: [
+      { label: "Selected", tone: "good", onClick: () => void decideDebrief("Advance") },
+      { label: "Hold", tone: "warn", onClick: () => void decideDebrief("Hold") },
+      { label: "Reject", tone: "bad", onClick: () => void decideDebrief("Reject") }] }
+    : canRequestOffer ? { title: "Request offer approval", text: "All interview rounds are complete.", actions: [
+      { label: "Request offer", tone: "primary", onClick: () => goTo("offer") }] }
+    : canDecideOffer ? { title: "An offer is waiting for your decision", actions: [
+      { label: "Review offer", tone: "primary", onClick: () => goTo("offer") }] }
+    : canScheduleNext ? { title: `Schedule Round ${nextRoundIndex}${nextRoundMeta?.name ? `: ${nextRoundMeta.name}` : ""}`, actions: [
+      { label: "Schedule", tone: "primary", onClick: () => onScheduleRound?.(nextRoundIndex) }] }
+    : showStageEditor ? { title: "Update the stage", text: "Move this candidate to the next stage.", actions: [
+      { label: "Update stage", tone: "primary", onClick: () => goTo("interviews", "ats-stage-anchor") }] }
+    : c.stage === "PendingHMApproval" ? { title: "Waiting for hiring manager approval", text: "Interviews can be scheduled once the hiring manager approves." }
     : null;
-  const tabLabels: [Tab, string][] = [["interviews", "Interviews & feedback"], ["offer", "Offer"], ["cv", "CV"], ["activity", "Activity & comments"]];
+  const cardActions: StepAction[] | undefined = nextStep?.actions;
+  const tabLabels: [Tab, string][] = [["interviews", "Interviews & feedback"], ["offer", "Offer"], ["cv", "CV"], ...(role === "DepartmentHead" ? [] : [["activity", "Activity & comments"] as [Tab, string]])];
 
   async function hmDecide(action: "hmApprove" | "hmReject") {
     let reason: string | undefined;
@@ -327,15 +379,13 @@ export function CandidatePanel({
 
   async function updateInterviewSchedule(
     interviewId: string,
-    status: "Reschedule Requested" | "Rescheduled",
-    requester?: "Candidate" | "Interviewer",
-    datetime?: string
+    datetime: string
   ) {
-    if (status === "Rescheduled" && !datetime) {
+    if (!datetime) {
       alert("Choose a new interview date and time.");
       return;
     }
-    const reason = window.prompt(`Reason for changing this interview to ${status}:`)?.trim();
+    const reason = window.prompt("Reason for rescheduling this interview:")?.trim();
     if (!reason) return;
     if (reason.length > 500) { window.alert("Use a reason of up to 500 characters."); return; }
     setBusy(true);
@@ -345,10 +395,9 @@ export function CandidatePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: interviewId,
-          status,
+          status: "Rescheduled",
           reason,
-          rescheduleRequestedBy: status === "Reschedule Requested" ? requester : undefined,
-          datetime: datetime ? new Date(datetime).toISOString() : undefined,
+          datetime: new Date(datetime).toISOString(),
         }),
       });
       const result = await response.json();
@@ -393,16 +442,16 @@ export function CandidatePanel({
 
   return (
     <div className={inDrawer ? "ats-profile ats-profile-drawer" : "ats-profile ats-profile-redesign"}>
-      {inDrawer && <header className="ats-drawer-head"><div><h3>{section === "offer" ? "Request offer" : section === "debrief" ? "Debrief decision" : "Add feedback"}</h3><small>{c.name}{requisition?.title ? ` · ${requisition.title}` : ""}</small></div><button type="button" className="ats-drawer-close" aria-label="Close" onClick={onClose}>×</button></header>}
+      {inDrawer && <header className="ats-drawer-head"><div><h3>{section === "offer" ? "Request offer" : section === "debrief" ? "Debrief decision" : updatingFeedback ? "Update feedback" : "Add feedback"}</h3><small>{c.name}{requisition?.title ? ` · ${requisition.title}` : ""}{section === "feedback" && pendingInterview?.roundName ? ` · ${pendingInterview.roundName}` : ""}</small></div><button type="button" className="ats-drawer-close" aria-label="Close" onClick={onClose}>×</button></header>}
       {!inDrawer && <>
       <div className="ats-profile-utility"><div className="ats-profile-breadcrumbs"><button type="button" className="ats-profile-back" onClick={onClose}>← Hiring Requests</button><span>/</span><span>{requisition?.title || "Candidate"}</span><span>/</span><strong>{c.name}</strong></div></div>
       <header className="ats-profile-header">
         <div>
-          <h3>{c.name}</h3>
+          <div className="ats-name-row"><h3>{c.name}</h3>{canRecruit(role) && <span className="ats-contact-icons"><CallCandidate candidate={c} apiFetch={apiFetch} roleTitle={requisition?.title} /><EmailCandidate candidate={c} apiFetch={apiFetch} roleTitle={requisition?.title} /><CandidateStatusMenu candidateId={c.id} name={c.name} stage={c.stage} eligible={rescheduleEligibleInterviews} apiFetch={apiFetch} onDone={onRefresh} /></span>}</div>
           <div className="ats-profile-subtitle">Candidate ID <strong>{c.candidateId || "Pending backfill"}</strong></div>
           <div className="ats-profile-subtitle">{requisition?.title || "Candidate"}<Chip color={statusColor(c.stage)}>{prettyStatus(c.stage)}</Chip></div>
         </div>
-        <div className="ats-profile-actions">{canReopen && <button type="button" className="ats-btn-approve" disabled={reopening} onClick={() => void reopenApplication()}>{reopening ? "Reopening…" : "Reopen application"}</button>}{c.cvPath && <button type="button" className="ats-profile-resume" onClick={() => void openResume()}>View CV</button>}{canHmDecide && <><button type="button" className="ats-btn-approve" disabled={busy} data-hm-decision="approve" onClick={() => hmDecide("hmApprove")}>Approve</button><button type="button" className="ats-btn-reject" disabled={busy} data-hm-decision="reject" onClick={() => hmDecide("hmReject")}>Reject</button></>}</div>
+        <div className="ats-profile-actions">{canReopen && <button type="button" className="ats-btn-approve" disabled={reopening} onClick={() => void reopenApplication()}>{reopening ? "Reopening…" : "Reopen application"}</button>}</div>
       </header>
       {reopenError && <p role="alert">{reopenError}</p>}
       {c.previousApplicationRecordId && <button type="button" className="ats-profile-back" onClick={() => void onOpenApplication(c.previousApplicationRecordId!)}>View previous application</button>}
@@ -418,8 +467,8 @@ export function CandidatePanel({
 
         </aside>}
         <div className="ats-cand-main" style={{ width: "100%", minWidth: 0, margin: 0, padding: 0 }}>
-        {nextStep && <div className="ats-next-card"><div><small>Next step</small><h2>{nextStep.title}</h2>{nextStep.text && <p>{nextStep.text}</p>}</div>{nextStep.action && nextStep.label && <button type="button" onClick={nextStep.action}>{nextStep.label}</button>}</div>}
-        {!inDrawer && <div className="ats-tabs" role="tablist" aria-label="Candidate sections">{tabLabels.map(([id, label]) => <button type="button" role="tab" key={id} id={`ats-tab-${id}`} aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>{label}</button>)}</div>}
+        {nextStep && <div className="ats-next-card"><div><small>Next step</small><h2>{nextStep.title}</h2>{nextStep.text && <p>{nextStep.text}</p>}</div>{cardActions && <div className="ats-next-card-actions">{cardActions.map((action) => <button type="button" key={action.label} className={`is-${action.tone || "primary"}`} disabled={action.disabled} onClick={action.onClick}>{action.label}</button>)}</div>}</div>}
+        {!inDrawer && <div className="ats-tabs" role="tablist" aria-label="Candidate sections">{tabLabels.map(([id, label]) => <button type="button" role="tab" key={id} id={`ats-tab-${id}`} aria-selected={visibleTab === id} className={visibleTab === id ? "is-on" : ""} onClick={() => setTab(id)}>{label}</button>)}</div>}
         {show("cv") && <div className="ats-profile-cv-column">
         <section className="ats-profile-cv-panel">
           {cvPreview ? <iframe title="Candidate CV" src={`${cvPreview}#navpanes=0&view=FitH`} /> : <div className="ats-profile-cv-empty">{cvError ? `CV preview unavailable: ${cvError}` : !c.cvPath ? "No CV attached." : /\.pdf$/i.test(c.cvFileName || "") ? "Loading CV…" : "Preview is available for PDF files. Use View CV to open this file."}</div>}</section>
@@ -474,42 +523,6 @@ export function CandidatePanel({
           Rejected: {c.hmRejectReason}
         </div>
       )}
-      {canRecruit(role) && rescheduleEligibleInterviews.length > 0 && (
-        <div style={{ margin: "10px 0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {rescheduleEligibleInterviews.length > 1 && (
-                <select
-                  aria-label="Interview to reschedule"
-                  style={{ ...inp, width: 220, height: 42, margin: 0 }}
-                  value={rescheduleTargetId}
-                  onChange={(event) => setSelectedRescheduleInterviewId(event.target.value)}
-                >
-                  {rescheduleEligibleInterviews.map((interview) => (
-                    <option key={interview.id} value={interview.id}>
-                      {interview.roundName || `Round ${interview.roundIndex || 1}`} · {formatDateTime(interview.datetime)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button
-                type="button"
-                disabled={busy || !rescheduleTargetId}
-                onClick={() => updateInterviewSchedule(rescheduleTargetId, "Reschedule Requested", "Candidate")}
-                style={{ ...candidateWorkflowButton, background: "#376daa" }}
-              >
-                Candidate Requested Reschedule
-              </button>
-              <button
-                type="button"
-                disabled={busy || !rescheduleTargetId}
-                onClick={() => updateInterviewSchedule(rescheduleTargetId, "Reschedule Requested", "Interviewer")}
-                style={{ ...candidateWorkflowButton, background: "#6b5b95" }}
-              >
-                Interviewer Requested Reschedule
-              </button>
-          </div>
-        </div>
-      )}
       {canReviewSocialCv && (
         <div className="ats-social-cv-review">
           <div><strong>Social CV review</strong><span>Advance this profile to hiring manager approval or reject the social application.</span></div>
@@ -520,7 +533,7 @@ export function CandidatePanel({
         </div>
       )}
 
-      {canScheduleNext && nextStep?.label !== "Schedule" && (
+      {canScheduleNext && !nextStep?.actions?.some((action) => action.label === "Schedule") && (
         <button
           type="button"
           style={{ ...saveBtn, marginBottom: 14 }}
@@ -531,7 +544,7 @@ export function CandidatePanel({
         </button>
       )}
 
-      {c.stage === "PendingHMApproval" && (role === "Admin" || canRecruit(role)) && (
+      {c.stage === "PendingHMApproval" && !nextStep && (role === "Admin" || canRecruit(role)) && (
         <div
           style={{
             background: "#fff7ec",
@@ -548,6 +561,7 @@ export function CandidatePanel({
         </div>
       )}
 
+      <span id="ats-stage-anchor" />
       {showStageEditor ? (
         <div style={{ marginTop: 14 }}>
           <label style={lab}>Update stage</label>
@@ -668,7 +682,7 @@ export function CandidatePanel({
       )}
       {c.stage === "Selected" && !interviewRoundsComplete && (
         <div style={{ marginTop: 14, padding: 10, background: "#fff7ec", border: "1px solid #f0d9b0", borderRadius: 8, fontSize: 13, color: "#8a5a00" }}>
-          Complete all configured interview rounds and choose <b>Advance</b> in the final debrief. The offer approval request will then appear here.
+          Complete all configured interview rounds and choose <b>Selected</b> in the final debrief. The offer approval request will then appear here.
         </div>
       )}
       {canRequestOffer && (
@@ -721,10 +735,28 @@ export function CandidatePanel({
 
       {show("feedback") && (inDrawer || feedbackList.length > 0 || showFeedbackForm) && <>
       <span id="ats-feedback-anchor" />
-      <h4>Feedback</h4>
+      {updatingFeedback && (editingFeedback ? (
+        <label style={lab}>
+          Interview feedback to update
+          <select style={inp} value={editingFeedbackId} disabled={savingFeedback} onChange={(event) => {
+            const entry = editableFeedback.find((item) => item.id === event.target.value);
+            if (entry) selectFeedback(entry);
+          }}>
+            {editableFeedback.map((entry) => {
+              const interview = data.interviews.find((item) => item.id === entry.interviewId);
+              return <option key={entry.id} value={entry.id}>
+                {interview?.roundName || `Round ${interview?.roundIndex || 1}`} · {entry.interviewer} · {formatDateTime(entry.createdAt)}
+              </option>;
+            })}
+          </select>
+        </label>
+      ) : <p>No submitted feedback is available to update.</p>)}
+      {!updatingFeedback && <>
+      {!inDrawer && <h4>Feedback</h4>}
       <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
         Interviewer notes after a round — rating and hire recommendation.
       </p>
+      {showFeedbackEditor && canRecruit(role) && <div className="ats-feedback-backout"><span>Candidate withdrew?</span><CandidateStatusMenu candidateId={c.id} name={c.name} stage={c.stage} apiFetch={apiFetch} onDone={onRefresh} label="Interview Backout" directBackout /></div>}
       {feedbackList.map((f, i) => {
         const feedbackInterview = f.interviewId
           ? data.interviews.find((interview) => interview.id === f.interviewId)
@@ -732,7 +764,7 @@ export function CandidatePanel({
         return (
         <div key={i} className="ats-fb-card">
           <div className="ats-fb-head">
-            <div><b>{feedbackInterview ? `Round ${feedbackInterview.roundIndex || 1}` : "Interview"}</b><small>{f.interviewer}</small></div>
+            <div><b>{feedbackInterview?.roundName || (feedbackInterview ? `Round ${feedbackInterview.roundIndex || 1}` : f.stage || "Interview")}</b><small>{f.interviewer}</small></div>
             <div className="ats-fb-right">
               <span className={`ats-fb-pill is-${String(f.recommendation || "").toLowerCase()}`}>{f.recommendation}</span>
               <span className="ats-fb-stars" aria-label={`${f.rating} of 5`}>
@@ -741,23 +773,24 @@ export function CandidatePanel({
               </span>
             </div>
           </div>
-          {f.feedback && <div className="ats-fb-notes">{f.feedback}</div>}
-          {f.customAnswers?.map((item, index) => <div key={index} style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><strong>{item.question}</strong><div>{item.answer?.startsWith("[") ? (() => { try { const parsed = JSON.parse(item.answer); return Array.isArray(parsed) ? parsed.join(", ") : item.answer; } catch { return item.answer; } })() : item.answer || "—"}</div></div>)}
+          <div className="ats-fb-notes"><strong>Interview notes</strong><div>{f.feedback || "No interview notes provided."}</div></div>
+          {f.customAnswers?.map((item, index) => <div className="ats-fb-answer" key={index}><strong>{item.question}</strong><div>{item.answer?.startsWith("[") ? (() => { try { const parsed = JSON.parse(item.answer); return Array.isArray(parsed) ? parsed.join(", ") || "—" : item.answer; } catch { return item.answer; } })() : item.answer || "—"}</div></div>)}
         </div>
         );
       })}
-      {!showFeedbackForm && feedbackList.length > 0 && (
+      {canRecruit(role) && !showFeedbackForm && feedbackList.length > 0 && (
         <p style={{ fontSize: 13, color: "#666", marginTop: 4 }}>
           {canScheduleNext
             ? "Ready to schedule the next round."
             : showDebrief
               ? "Feedback is in — make a debrief decision before scheduling the next round."
-              : "Feedback recorded. Finish the current round (feedback → debrief Advance) before scheduling the next."}
+              : "Feedback recorded. Finish the current round (feedback → debrief Selected) before scheduling the next."}
         </p>
       )}
-      {showFeedbackForm && (
-        <>
-          {canRecruit(role) && pendingInterview?.interviewerEmails?.length ? (
+      </>}
+      {showFeedbackEditor && (
+        <div className="ats-feedback-editor">
+          {!updatingFeedback && canRecruit(role) && feedbackInterview?.interviewerEmails?.length ? (
             <>
               <label style={lab}>Submit feedback on behalf of</label>
               <select
@@ -766,14 +799,14 @@ export function CandidatePanel({
                 onChange={(e) => setFeedbackFor(e.target.value)}
               >
                 <option value="">Select interviewer</option>
-                {pendingInterview.interviewerEmails.map((email) => (
+                {feedbackInterview.interviewerEmails.map((email) => (
                   <option key={email} value={email}>{email}</option>
                 ))}
               </select>
             </>
           ) : null}
-          {pendingInterview?.feedbackForm?.description && <p style={{ color: "#626078", fontSize: 13, lineHeight: 1.5, margin: "0 0 12px" }}>{pendingInterview.feedbackForm.description}</p>}
-          {(pendingInterview?.feedbackForm?.questions || []).map((rawQuestion, index) => { const q = normalizeQuestion(rawQuestion); const value = customAnswers[index] || ""; const update = (answer: string) => setCustomAnswers((current) => ({ ...current, [index]: answer })); let selected: string[] = []; if (q.type === "checkboxes" && value) { try { selected = JSON.parse(value); } catch { selected = []; } } return <fieldset key={index} style={{ border: "1px solid #e1e6e2", borderRadius: 8, padding: 12, margin: "12px 0" }}><legend style={{ fontSize: 13, fontWeight: 600 }}>{q.label}{q.required ? " *" : ""}</legend>
+          {feedbackInterview?.feedbackForm?.description && <p style={{ color: "#626078", fontSize: 13, lineHeight: 1.5, margin: "0 0 12px" }}>{feedbackInterview.feedbackForm.description}</p>}
+          {(feedbackInterview?.feedbackForm?.questions || []).map((rawQuestion, index) => { const q = normalizeQuestion(rawQuestion); const value = customAnswers[index] || ""; const update = (answer: string) => setCustomAnswers((current) => ({ ...current, [index]: answer })); let selected: string[] = []; if (q.type === "checkboxes" && value) { try { selected = JSON.parse(value); } catch { selected = []; } } return <fieldset key={index} style={{ border: "1px solid #e1e6e2", borderRadius: 8, padding: 12, margin: "12px 0" }}><legend style={{ fontSize: 13, fontWeight: 600 }}>{q.label}{q.required ? " *" : ""}</legend>
             {q.description && <p style={{ color: "#626078", fontSize: 12, lineHeight: 1.45, margin: "0 0 8px" }}>{q.description}</p>}
             {q.type === "short" && <input style={inp} value={value} onChange={(e) => update(e.target.value)} />}
             {q.type === "paragraph" && <textarea style={{ ...inp, minHeight: 70 }} value={value} onChange={(e) => update(e.target.value)} />}
@@ -782,15 +815,15 @@ export function CandidatePanel({
             {q.type === "checkboxes" && q.options.map((option) => <label key={option} style={{ display: "block", margin: "6px 0" }}><input type="checkbox" checked={selected.includes(option)} onChange={(e) => { const next = e.target.checked ? [...selected, option] : selected.filter((v) => v !== option); update(next.length ? JSON.stringify(next) : ""); }} /> {option}</label>)}
             {(q.type === "scale" || q.type === "stars") && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{Array.from({ length: q.scaleMax }, (_, i) => i + 1).map((n) => <button key={n} type="button" aria-label={`${n} of ${q.scaleMax}`} aria-pressed={value === String(n)} onClick={() => update(String(n))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #cad5e2", background: value === String(n) ? "#dcefe3" : "white", color: q.type === "stars" && Number(value) >= n ? "#c18b00" : "#344", fontSize: q.type === "stars" ? 22 : 13 }}>{q.type === "stars" ? "★" : n}</button>)}</div>}
           </fieldset>; })}
-          <label style={lab}>Interview notes</label>
-          <VoiceDictation onText={(text) => setFb((current) => (current ? `${current} ${text}` : text))} />
+          <div className="ats-feedback-notes-head"><label style={lab} htmlFor="ats-feedback-notes">Interview notes</label><VoiceDictation onText={(text) => setFb((current) => (current ? `${current} ${text}` : text))} /></div>
           <textarea
+            id="ats-feedback-notes"
             style={{ ...inp, minHeight: 70 }}
             placeholder="What went well, gaps, follow-ups…"
             value={fb}
             onChange={(e) => setFb(e.target.value)}
           />
-          <label style={lab}>Rating</label>
+          <label style={lab}>Rating *</label>
           <div
             style={{
               display: "flex",
@@ -823,61 +856,73 @@ export function CandidatePanel({
               </button>
             ))}
             <span style={{ fontSize: 13, color: "#666", marginLeft: 6 }}>
-              {rating}/5
+              {rating ? `${rating}/5` : "Select a rating"}
             </span>
           </div>
-          <label style={lab}>Recommendation</label>
-          <select
-            style={inp}
-            value={rec}
-            onChange={(e) => setRec(e.target.value)}
-          >
-            {[
-              "Strong Yes",
-              "Yes",
-              "Lean Yes",
-              "Lean No",
-              "No",
-              "Strong No",
-            ].map((x) => (
-              <option key={x}>{x}</option>
+          <label style={lab}>Recommendation *</label>
+          <div className="ats-rec-group" role="radiogroup" aria-label="Recommendation">
+            {["Strong Yes", "Yes", "Lean Yes", "Lean No", "No", "Strong No"].map((x) => (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={rec === x}
+                key={x}
+                className={`ats-rec-btn ${/yes/i.test(x) ? "is-yes" : "is-no"}${rec === x ? " is-on" : ""}`}
+                onClick={() => setRec(x)}
+              >
+                {x}
+              </button>
             ))}
-          </select>
+          </div>
+          {feedbackError && <p className="ats-feedback-error" role="alert">{feedbackError}</p>}
           <button
+            className="ats-save-feedback"
             style={{ ...saveBtn, marginTop: 10 }}
+            disabled={savingFeedback}
             onClick={async () => {
-              const questions = (pendingInterview?.feedbackForm?.questions || []).map(normalizeQuestion);
-              if (questions.some((q, index) => !validFeedbackAnswer(q, customAnswers[index] || ""))) { alert("Please complete the required feedback questions."); return; }
+              const questions = (feedbackInterview?.feedbackForm?.questions || []).map(normalizeQuestion);
+              if (questions.some((q, index) => !validFeedbackAnswer(q, customAnswers[index] || ""))) { setFeedbackError("Please complete the required feedback questions."); return; }
+              if (!rating || !rec) { setFeedbackError("Choose a rating and recommendation before saving."); return; }
 
-              const r = await apiFetch(`/api/candidates/${c.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  action: "feedback",
-                  feedback: fb,
-                  customAnswers: questions.map((question, index) => ({ question: question.label, answer: customAnswers[index] || "" })),
-                  rating,
-                  recommendation: rec,
-                  interviewId: pendingInterview?.id,
-                  interviewer: feedbackFor || pendingInterview?.interviewerEmails?.[0],
-                }),
-              });
-              const d = await r.json();
-              if (!r.ok) alert(d.error);
-              else {
-                setFb("");
-                setCustomAnswers({});
-                setFeedbackFor("");
-                onRefresh();
+              setFeedbackError("");
+              setSavingFeedback(true);
+              try {
+                const r = await apiFetch(`/api/candidates/${c.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    action: updatingFeedback ? "updateFeedback" : "feedback",
+                    feedbackId: editingFeedback?.id,
+                    feedbackUpdatedAt: editingFeedback?.updatedAt ?? null,
+                    feedback: fb,
+                    customAnswers: questions.map((question, index) => ({ question: question.label, answer: customAnswers[index] || "" })),
+                    rating,
+                    recommendation: rec,
+                    interviewId: feedbackInterview?.id,
+                    interviewer: feedbackFor || feedbackInterview?.interviewerEmails?.[0],
+                  }),
+                });
+                const d = await r.json();
+                if (!r.ok) setFeedbackError(d.error || "Could not save feedback. Try again.");
+                else {
+                  setFb("");
+                  setCustomAnswers({});
+                  setFeedbackFor("");
+                  onRefresh();
+                }
+              } catch {
+                setFeedbackError("Could not save feedback. Try again.");
+              } finally {
+                setSavingFeedback(false);
               }
             }}
           >
-            Save feedback
+            {savingFeedback ? "Saving…" : updatingFeedback ? "Save changes" : "Save feedback"}
           </button>
-        </>
+        </div>
       )}
       </>}
-      {show("debrief") && <>
+      {show("debrief") && (inDrawer || !nextStep?.actions?.some((action) => action.label === "Selected")) && <>
       <span id="ats-debrief-anchor" />
       {showDebrief && (
           <div className="ats-debrief-card">
@@ -887,32 +932,17 @@ export function CandidatePanel({
               {["Advance", "Hold", "Reject"].map((dec) => (
                 <button
                   key={dec}
-                  className={dec === "Reject" ? "ats-debrief-reject" : "ats-debrief-btn"}
-                  onClick={async () => {
-                    const r = await apiFetch(`/api/candidates/${c.id}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        action: "debrief",
-                        decision: dec,
-                      }),
-                    });
-                    const d = await r.json();
-                    if (!r.ok) alert(d.error);
-                    else {
-                      if (dec === "Reject") signalHoneyBadgerMood("sad");
-                      onRefresh();
-                    }
-                  }}
+                  className={`ats-debrief-btn is-${dec.toLowerCase()}`}
+                  onClick={() => void decideDebrief(dec as "Advance" | "Hold" | "Reject")}
                 >
-                  {dec}
+                  {dec === "Advance" ? "Selected" : dec}
                 </button>
               ))}
             </div>
           </div>
         )}
       </>}
-      {show("interviews") && (data.interviews || []).length === 0 && feedbackList.length === 0 && !showFeedbackForm && <p className="ats-cand-empty">No interviews yet. Once a round is scheduled, it appears here with its feedback.</p>}
+      {show("feedback") && !inDrawer && (data.interviews || []).length === 0 && feedbackList.length === 0 && !showFeedbackForm && <p className="ats-cand-empty">No interviews yet. Once a round is scheduled, its feedback appears here.</p>}
       {show("interviews") && (data.interviews || []).length > 0 && <>
       <h4>Interviews</h4>
       {(data.interviews || []).length === 0 && (
@@ -954,8 +984,6 @@ export function CandidatePanel({
                 disabled={busy || !(rescheduleTimes[iv.id] ?? toDateTimeInput(iv.datetime))}
                 onClick={() => updateInterviewSchedule(
                   iv.id,
-                  "Rescheduled",
-                  undefined,
                   rescheduleTimes[iv.id] ?? toDateTimeInput(iv.datetime)
                 )}
               >
@@ -979,19 +1007,3 @@ function toDateTimeInput(value: string) {
     .toISOString()
     .slice(0, 16);
 }
-
-const candidateWorkflowButton: CSSProperties = {
-  ...saveBtn,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  boxSizing: "border-box",
-  width: 260,
-  minWidth: 260,
-  height: 42,
-  padding: "9px 16px",
-  fontFamily: "inherit",
-  fontSize: 14,
-  lineHeight: "20px",
-  whiteSpace: "nowrap",
-};

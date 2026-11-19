@@ -25,11 +25,6 @@ export async function GET(req: NextRequest) {
       const team = (await listUsers()).filter((member) => member.role === "Recruiter" && member.managerEmail === user.email);
       const teamEmails = new Set(team.map((member) => member.email));
       reqs = reqs.filter((requisition) => !requisition.recruiterEmail || teamEmails.has(requisition.recruiterEmail));
-    } else if (user.role === "HiringManager") {
-      reqs = reqs.filter((r) => r.raisedByEmail === user.email);
-    } else if (user.role === "DepartmentHead") {
-      const set = new Set((user.departments || []).map((d) => d.toLowerCase()));
-      reqs = reqs.filter((r) => set.has(r.department.toLowerCase()));
     } else if (user.role === "Recruiter") {
       reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
     }

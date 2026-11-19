@@ -1,6 +1,7 @@
+import { parseAccessScopes } from "@/lib/requisitionScope";
 import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireUser } from "@/lib/auth";
-import { addAudit, getOrg, saveOrg, setIntegrationRequest } from "@/lib/db";
+import { addAudit, getOrg, listUsers, saveOrg, setIntegrationRequest } from "@/lib/db";
 import { canManageTeam, DEPARTMENTS } from "@/lib/roles";
 import { validFeedbackForms } from "@/lib/feedbackForms";
 import { parseIntegrationRequest } from "@/lib/integrationRequests";
@@ -38,6 +39,10 @@ export async function PATCH(req: NextRequest) {
       const departmentBusinessUnits = [...new Map(mapping.map((item: { businessUnit: string; department: string }) =>
         [JSON.stringify([item.businessUnit, item.department]), { businessUnit: item.businessUnit, department: item.department }]
       )).values()];
+      const proposed = { ...current, businessUnits, subDepartments, departmentBusinessUnits };
+      if ((await listUsers(true)).some((member) => member.accessScopes?.length && !parseAccessScopes(member.accessScopes, proposed))) {
+        throw new ApiError(409, "Update team access scopes before removing their business units, departments or sub-departments.");
+      }
       return json({ org: await saveOrg({ businessUnits, subDepartments, departmentBusinessUnits, requisitionDepartmentRequired: body.departmentRequired, requisitionBusinessUnitRequired: body.businessUnitRequired }) });
     }
     if (body.action === "setCandidateCustomFields") {

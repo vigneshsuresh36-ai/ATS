@@ -7,7 +7,7 @@ const key = (value?: string) => (value ?? "").trim().toLowerCase();
 export function departmentOptions(org: Pick<OrgSettings, "customDepartments" | "departmentBusinessUnits">, businessUnit: string) {
   const departments = [...new Set([...DEPARTMENTS, ...(org.customDepartments ?? [])])];
   const mapped = (org.departmentBusinessUnits ?? []).filter((entry) => key(entry.businessUnit) === key(businessUnit));
-  return mapped.length ? departments.filter((department) => mapped.some((entry) => key(entry.department) === key(department))) : departments;
+  return org.departmentBusinessUnits?.length && businessUnit ? departments.filter((department) => mapped.some((entry) => key(entry.department) === key(department))) : departments;
 }
 
 export function requiresSubDepartment(department: string, org: Pick<OrgSettings, "businessUnits">) {
@@ -31,7 +31,7 @@ export function canViewScopedRequisition(user: AppUser, request: ScopedRequest &
       (!request.accessScoped && user.accessScopes === undefined || coversRequisitionScope(user, request));
   }
   if (user.role === "DepartmentHead") return coversRequisitionScope(user, request);
-  return true;
+  return user.role !== "Employee";
 }
 
 export function scopeDepartments(user: AppUser) {

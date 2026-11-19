@@ -78,7 +78,7 @@ export async function updateRequisition(
   id: string,
   patch: Partial<Requisition>,
   audit?: StatusAuditContext,
-  expected?: Pick<Requisition, "status" | "department" | "recruiterEmail" | "recruiterCollaboratorEmails" | "openings">
+  expected?: Pick<Requisition, "status" | "department" | "lob" | "subDepartment" | "accessScoped" | "recruiterEmail" | "recruiterCollaboratorEmails" | "openings">
 ): Promise<Requisition | null> {
   const db = requireAdminDb();
   const ref = db.collection("requisitions").doc(id);
@@ -86,6 +86,7 @@ export async function updateRequisition(
     const current = (await transaction.get(ref)).data() as Requisition | undefined;
     if (!current) return null;
     if (expected && (current.status !== expected.status || current.department !== expected.department ||
+      current.lob !== expected.lob || current.subDepartment !== expected.subDepartment || current.accessScoped !== expected.accessScoped ||
       current.recruiterEmail !== expected.recruiterEmail ||
       recruiterCollaborators(current.recruiterCollaboratorEmails).join(",") !== recruiterCollaborators(expected.recruiterCollaboratorEmails).join(",") || current.openings !== expected.openings)) {
       if (audit?.source === "System") return current;

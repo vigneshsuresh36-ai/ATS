@@ -69,6 +69,7 @@ export async function upsertUser(
     name: data.name,
     role: data.role,
     title: data.title || data.role,
+    ...(data.phone !== undefined ? { phone: data.phone.trim() } : {}),
     departments: data.departments || [],
     ...(data.accessScopes !== undefined ? { accessScopes: data.accessScopes } : {}),
     managerEmail: data.managerEmail || "",

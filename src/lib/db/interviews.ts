@@ -105,6 +105,28 @@ export async function createFeedback(
   return fb;
 }
 
+export async function updateFeedback(
+  entry: InterviewFeedback,
+  changes: Pick<InterviewFeedback, "feedback" | "rating" | "recommendation" | "customAnswers">,
+  updatedBy: string,
+): Promise<InterviewFeedback> {
+  const db = requireAdminDb();
+  const ref = db.collection("interview_feedback").doc(entry.id);
+  return db.runTransaction(async (transaction) => {
+    const current = (await transaction.get(ref)).data() as InterviewFeedback | undefined;
+    if (!current || current.candidateId !== entry.candidateId || current.reqId !== entry.reqId ||
+        current.interviewId !== entry.interviewId) {
+      throw new ApiError(404, "Interview feedback not found.");
+    }
+    if (current.updatedAt !== entry.updatedAt) {
+      throw new ApiError(409, "This feedback has changed. Reopen it and try again.");
+    }
+    const patch = { ...changes, updatedAt: now(), updatedBy };
+    transaction.update(ref, patch);
+    return { ...current, ...patch };
+  });
+}
+
 export async function listFeedback(candidateId: string) {
   const snap = await requireAdminDb()
     .collection("interview_feedback")

@@ -27,6 +27,7 @@ if (require.main === module) {
   require("../tests/interviewPlan.test.ts");
   require("../tests/candidateReopening.test.ts");
   require("../tests/joiningTimeline.test.ts");
+  require("../tests/requisitionScope.test.ts");
 }
 
 

@@ -281,8 +281,9 @@ export function NewReqForm({
         <button
           disabled={busy}
           onClick={async () => {
-            if (departmentRequired && !department) { alert("Select a department."); return; }
+            if ((departmentRequired || businessUnitRequired) && !department) { alert("Select a department."); return; }
             if (businessUnitRequired && !businessUnit) { alert("Select a business unit."); return; }
+            if (subRequired && !subDepartment) { alert("Select a sub-department."); return; }
             if (!requisitionType) {
               alert("Select whether this is a new or replacement requisition.");
               return;

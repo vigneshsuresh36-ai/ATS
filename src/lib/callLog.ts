@@ -1,5 +1,9 @@
 export const CALL_OUTCOMES = ["Connected", "No answer", "Busy", "Call back later", "Wrong number"] as const;
 export type CallOutcome = (typeof CALL_OUTCOMES)[number];
+export const EMAIL_OUTCOMES = ["Sent", "Replied", "No reply", "Wrong email"] as const;
+export type EmailOutcome = (typeof EMAIL_OUTCOMES)[number];
+export type ContactType = "call" | "email";
+export const outcomesFor = (type: ContactType): readonly string[] => (type === "email" ? EMAIL_OUTCOMES : CALL_OUTCOMES);
 
 /** Keeps digits and a leading +; bare 10-digit Indian numbers get +91. Returns "" when no usable number. */
 export function dialNumber(phone: string | undefined | null): string {

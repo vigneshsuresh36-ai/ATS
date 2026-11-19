@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { ApiError, errResponse, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import { getCandidate, getRequisition } from "@/lib/db";
 import { requireAdminDb } from "@/lib/firebaseAdmin";
-import { CALL_OUTCOMES } from "@/lib/callLog";
+import { outcomesFor, type ContactType } from "@/lib/callLog";
 
 async function access(req: NextRequest, id: string) {
   const user = await requireUser(req);
@@ -32,12 +32,13 @@ export async function POST(req: NextRequest, ctx: Context) {
     const { id } = await ctx.params;
     const user = await access(req, id);
     const body = await req.json();
+    const type: ContactType = body.type === "email" ? "email" : "call";
     const outcome = typeof body.outcome === "string" ? body.outcome : "";
-    if (!(CALL_OUTCOMES as readonly string[]).includes(outcome)) throw new ApiError(400, "Choose how the call went.");
+    if (!outcomesFor(type).includes(outcome)) throw new ApiError(400, type === "email" ? "Choose how the email went." : "Choose how the call went.");
     const note = typeof body.note === "string" ? body.note.trim() : "";
     if (note.length > 1000) throw new ApiError(400, "Keep the note under 1,000 characters.");
     const ref = requireAdminDb().collection("candidates").doc(id).collection("calls").doc();
-    const call = { outcome, note, author: user.email, createdAt: new Date().toISOString() };
+    const call = { type, outcome, note, author: user.email, createdAt: new Date().toISOString() };
     await ref.set(call);
     return Response.json({ call: { id: ref.id, ...call } }, { status: 201 });
   } catch (error) { return errResponse(error); }

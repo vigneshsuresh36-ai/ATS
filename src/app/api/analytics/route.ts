@@ -16,11 +16,6 @@ export async function GET(req: NextRequest) {
     if (user.role === "Admin") {
       const teamEmails = new Set(users.filter((member) => member.role === "Recruiter" && member.managerEmail === user.email).map((member) => member.email));
       reqs = reqs.filter((requisition) => !requisition.recruiterEmail || teamEmails.has(requisition.recruiterEmail));
-    } else if (user.role === "HiringManager") {
-      reqs = reqs.filter((r) => r.raisedByEmail === user.email);
-    } else if (user.role === "DepartmentHead") {
-      const set = new Set((user.departments || []).map((d) => d.toLowerCase()));
-      reqs = reqs.filter((r) => set.has(r.department.toLowerCase()));
     } else if (user.role === "Recruiter") {
       reqs = reqs.filter((r) => isAssignedRecruiter(r, user.email));
     }
@@ -30,7 +25,6 @@ export async function GET(req: NextRequest) {
       listInterviews(),
       listAllFeedback(),
     ]);
-    reqs = reqs.filter((request) => canViewScopedRequisition(user, request));
     const reqIds = new Set(reqs.map((r) => r.id));
     const visibleInterviews = interviews.filter((interview) => reqIds.has(interview.reqId));
     const scoped = cands.filter(

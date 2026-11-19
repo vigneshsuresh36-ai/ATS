@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import { ApiError, errResponse, json, requireManagedRequisitionAccess, requireUser } from "@/lib/auth";
 import { getOrg, getPlan, getRequisition, listUsers, savePlan } from "@/lib/db";
 import { canRecruit } from "@/lib/roles";
-import { userCoversDepartment } from "@/lib/roles";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -15,8 +14,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     if (!requisition) throw new ApiError(404, "Requisition not found.");
     await requireManagedRequisitionAccess(user, requisition);
     if (user.role === "Recruiter" && !isAssignedRecruiter(requisition, user.email)) throw new ApiError(403, "This requisition is not assigned to you.");
-    if (user.role === "HiringManager" && requisition.raisedByEmail !== user.email) throw new ApiError(403, "Not your requisition.");
-    if (user.role === "DepartmentHead" && !userCoversDepartment(user.departments, requisition.department)) throw new ApiError(403, "Not your department.");
     return json({ plan: await getPlan(id) });
   } catch (e) {
     return errResponse(e);

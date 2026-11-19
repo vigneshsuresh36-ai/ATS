@@ -10,9 +10,11 @@ import { openRejectionEmailDraft } from "@/lib/rejectionEmail";
 import { signalHoneyBadgerMood } from "@/lib/honeyBadgerMood";
 import { canEditRequisitionPriority, isRequisitionClosed, isRequisitionOpenForRecruiting } from "@/lib/requisitionStatus";
 import { joiningCountdownLabel, joiningTimeline } from "@/lib/joiningTimeline";
+import { remainingOfferOpenings } from "@/lib/offerCapacity";
 import { ActivityHistory } from "./ActivityHistory";
 import { CallCandidate } from "./CallCandidate";
-import { RowMenu } from "./RowMenu";
+import { EmailCandidate } from "./EmailCandidate";
+import { CandidateStatusMenu } from "./CandidateStatusMenu";
 import { dropoffRisk } from "@/lib/dropoffRisk";
 import { recruiterCollaborators } from "@/lib/recruiterAssignment";
 import { RoleHiringBrief } from "./RoleHiringBrief";
@@ -79,6 +81,7 @@ export function PipelinePanel({
   onCand,
   onAddCandidate,
   onScheduleCandidate,
+  onRescheduleInterview,
   onCandAction,
 }: {
   req: Requisition;
@@ -96,8 +99,9 @@ export function PipelinePanel({
   onCand: (id: string) => void;
   onAddCandidate?: () => void;
   onScheduleCandidate?: (candidateId: string, roundIndex: number) => void;
+  onRescheduleInterview?: (interview: Interview) => void;
   /** Opens feedback, debrief or offer in a side panel without leaving the pipeline. */
-  onCandAction?: (candidateId: string, section: "feedback" | "debrief" | "offer") => void;
+  onCandAction?: (candidateId: string, section: "feedback" | "update-feedback" | "debrief" | "offer") => void;
 }) {
   const [assignedCollaborators, setAssignedCollaborators] = useState(req.recruiterCollaboratorEmails || []);
   const collaboratorsChanged = recruiterCollaborators(assignedCollaborators).join(",") !== recruiterCollaborators(req.recruiterCollaboratorEmails).join(",");
@@ -133,6 +137,7 @@ export function PipelinePanel({
   const [careersBusy, setCareersBusy] = useState(false);
   const [careersError, setCareersError] = useState("");
   const [socialCvReviewId, setSocialCvReviewId] = useState<string | null>(null);
+  const [holdDecisionId, setHoldDecisionId] = useState<string | null>(null);
   const [summaryEditing, setSummaryEditing] = useState(false);
   useEffect(() => {
     const selector = ".ats-pipeline-row-actions[open]";
@@ -155,8 +160,10 @@ export function PipelinePanel({
       document.removeEventListener("keydown", handleKey);
     };
   }, []);
+  const capacityFull = req.status === "Position Fulfilled" || remainingOfferOpenings(req.openings, candidates) === 0;
   const canAdd =
     (role === "Admin" || canRecruit(role)) &&
+    !capacityFull &&
     (req.status === "Approved" ||
       req.status === "Position Reopened" ||
       req.status === "Partially Fulfilled");
@@ -311,30 +318,49 @@ export function PipelinePanel({
     finally { setCvMatchBusy(false); }
   }
 
-  type NextStep = { label: string; onClick: () => void; disabled?: boolean; danger?: boolean };
+  type NextStep = { label: string; onClick: () => void; disabled?: boolean; danger?: boolean; good?: boolean; title?: string };
   /** The first step is the row's main button; the rest go into its "more" menu. */
   function nextSteps(candidate: Candidate, schedulableRound: number | null, feedbackPending: boolean): NextStep[] {
     const steps: NextStep[] = [];
+    if (capacityFull || !isRequisitionOpenForRecruiting(req.status)) return steps;
     const recruiter = canRecruit(role);
-    const open = (section: "feedback" | "debrief" | "offer") => (onCandAction ? onCandAction(candidate.id, section) : onCand(candidate.id));
+    const open = (section: "feedback" | "update-feedback" | "debrief" | "offer") => (onCandAction ? onCandAction(candidate.id, section) : onCand(candidate.id));
+    if (candidate.stage === "On Hold" && recruiter) {
+      const candidateInterviews = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled");
+      const canSelect = candidateInterviews.length > 0 && candidateInterviews.every((interview) => interview.hasFeedback && interview.status !== "Reschedule Requested");
+      steps.push({ label: holdDecisionId === candidate.id ? "Saving…" : "Selected", good: true, disabled: holdDecisionId === candidate.id || !canSelect, title: canSelect ? undefined : "Complete the interview and feedback before selecting this candidate.", onClick: () => void decideHeldCandidate(candidate.id, "Advance") });
+      steps.push({ label: "Rejected", danger: true, disabled: holdDecisionId === candidate.id, onClick: () => void decideHeldCandidate(candidate.id, "Reject") });
+    }
     if ((candidate.stage === "Social CV" || (candidate.source === "Employee Referral" && candidate.stage === "New")) && recruiter) {
       const saving = socialCvReviewId === candidate.id;
-      steps.push({ label: saving ? "Saving…" : "Select CV", disabled: saving, onClick: () => void reviewSocialCv(candidate, "PendingHMApproval") });
+      steps.push({ label: saving ? "Saving…" : "Select CV", good: true, disabled: saving, onClick: () => void reviewSocialCv(candidate, "PendingHMApproval") });
       steps.push({ label: "Reject CV", danger: true, disabled: saving, onClick: () => void reviewSocialCv(candidate, candidate.source === "Employee Referral" ? "Rejected" : "Social CV Reject") });
     }
     if (candidate.stage === "PendingHMApproval" && (isHmOwner || role === "Admin")) {
-      steps.push({ label: "Approve", onClick: () => void hmDecide(candidate.id, "hmApprove") });
+      steps.push({ label: "Approve", good: true, onClick: () => void hmDecide(candidate.id, "hmApprove") });
       steps.push({ label: "Reject", danger: true, onClick: () => void hmDecide(candidate.id, "hmReject") });
     }
     if (recruiter && feedbackPending) steps.push({ label: "Add feedback", onClick: () => open("feedback") });
-    const live = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Rescheduled");
+    const live = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Reschedule Requested");
     const latestRound = live.reduce((max, interview) => Math.max(max, interview.roundIndex || 1), 0);
-    const debrief = (recruiter || isHmOwner) && (/debrief/i.test(candidate.stage) ||
-      (["Selected", "Interview Scheduled"].includes(candidate.stage) && live.length > 0 && !live.some((interview) => interview.feedbackPending) && latestRound > (candidate.lastAdvancedRound || 0)));
-    if (debrief) steps.push({ label: "Decide: advance or reject", onClick: () => open("debrief") });
+    const debrief = (recruiter || isHmOwner) && live.length > 0 && live.every((interview) => interview.hasFeedback) &&
+      (candidate.stage === "Debrief" || (["Selected", "Interview Scheduled"].includes(candidate.stage) && latestRound > (candidate.lastAdvancedRound || 0)));
+    if (debrief) steps.push({ label: "Decide: select or reject", onClick: () => open("debrief") });
     if (recruiter && onScheduleCandidate && schedulableRound !== null) steps.push({ label: `Schedule interview · Round ${schedulableRound}`, onClick: () => onScheduleCandidate(candidate.id, schedulableRound) });
-    if (candidate.stage === "Selected" && recruiter && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && !feedbackPending) steps.push({ label: "Request offer", onClick: () => open("offer") });
+    const offerInterviews = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled");
+    const offerReady = offerInterviews.length > 0 && offerInterviews.every((interview) => interview.hasFeedback) && interviewRounds.every((round) => offerInterviews.some((interview) => (interview.roundIndex || 1) === round.order));
+    if (candidate.stage === "Selected" && recruiter && candidate.offerApprovalStatus !== "Pending" && candidate.offerApprovalStatus !== "Approved" && (interviewRounds.at(-1)?.order ?? 0) <= (candidate.lastAdvancedRound || 0) && offerReady) steps.push({ label: "Request offer", onClick: () => open("offer") });
     return steps;
+  }
+
+  async function decideHeldCandidate(candidateId: string, decision: "Advance" | "Reject") {
+    setHoldDecisionId(candidateId);
+    try {
+      const response = await apiFetch(`/api/candidates/${candidateId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "debrief", decision, expectedStage: "On Hold" }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not update the candidate.");
+      onRefresh();
+    } catch (error) { window.alert(error instanceof Error ? error.message : "Could not update the candidate."); } finally { setHoldDecisionId(null); }
   }
 
   async function hmDecide(
@@ -442,7 +468,7 @@ export function PipelinePanel({
       <div className="ats-position-view ats-role-details-layout">
       <div className="ats-detail-summary-grid">
       <section id="ats-role-summary" className="ats-detail-role-card"><div className="ats-pipeline-section-head"><h4>Role summary</h4>{!summaryEditing && !isRequisitionClosed(req.status) && (role === "Admin" || canRecruit(role) || (isHmOwner && req.status === "PendingApproval")) && <button type="button" className="ats-pipeline-action is-primary" onClick={() => setSummaryEditing(true)}>Edit</button>}</div>
-      {summaryEditing ? <RoleSummaryEditor req={req} apiFetch={apiFetch} officeLocations={org?.officeLocations} onCancel={() => setSummaryEditing(false)} onSaved={onRefresh} /> : <>
+      {summaryEditing ? <RoleSummaryEditor req={req} apiFetch={apiFetch} officeLocations={org?.officeLocations} org={org} canChangeScope={role === "Admin" || role === "HiringManager" || !org?.businessUnits?.length} onCancel={() => setSummaryEditing(false)} onSaved={onRefresh} /> : <>
       <div
         className="ats-pipeline-overview"
         style={{
@@ -643,13 +669,19 @@ export function PipelinePanel({
             <thead><tr><th>Candidate</th><th>Current status</th><th>Interviews</th><th>Experience</th><th>CV / JD match</th><th>Expected salary</th><th>Notice</th><th>Actions</th></tr></thead>
             <tbody>{visibleCandidates.map((candidate) => {
               const schedulableRound = getNextSchedulableRound(candidate, interviews, interviewRounds);
-              const candidateInterviewCount = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Rescheduled").length;
-              const feedbackPending = interviews.some((interview) => interview.candidateId === candidate.id && interview.feedbackPending && interview.status !== "Cancelled" && interview.status !== "Rescheduled");
+              const candidateInterviewCount = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled").length;
+              const inInterviewStage = ["Interview", "Interview Scheduled", "Debrief"].includes(candidate.stage);
+              const feedbackPending = inInterviewStage && interviews.some((interview) => interview.candidateId === candidate.id && interview.status !== "Cancelled" && interview.status !== "Reschedule Requested" && (interview.feedbackPending || (interview.status === "Rescheduled" && !interview.hasFeedback)));
+              const offerBackout = canRecruit(role) && candidate.offerApprovalStatus === "Approved" && ["OfferApproved", "Offered"].includes(candidate.stage);
+              const showStatusUpdate = !capacityFull && isRequisitionOpenForRecruiting(req.status) && canRecruit(role) && (candidate.stage === "Interview Scheduled" || candidate.stage === "Debrief");
+              const rescheduleInterviews = interviews.filter((interview) => interview.candidateId === candidate.id && (interview.status === "Scheduled" || interview.status === "Rescheduled"));
+              const rescheduledInterviews = rescheduleInterviews.filter((interview) => interview.status === "Rescheduled");
+              const requestedReschedules = interviews.filter((interview) => interview.candidateId === candidate.id && interview.status === "Reschedule Requested");
               const result = cvMatches[candidate.id];
               const stale = !!result && (result.stale === true || result.requisitionJdText !== (req.jdText || "") || result.cvPath !== (candidate.cvPath || ""));
               const expanded = expandedCvMatch === candidate.id;
               return <Fragment key={candidate.id}><tr className="ats-pipeline-candidate-row" onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, select, textarea")) onCand(candidate.id); }}>
-                <td><button type="button" className="ats-pipeline-candidate-person" onClick={() => onCand(candidate.id)}><span className="ats-pipeline-candidate-avatar">{candidate.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><span><strong>{candidate.name}</strong><small>{candidate.email || "No email provided"}</small>{candidate.candidateId && <small className="ats-candidate-id-subtle">{candidate.candidateId}</small>}</span></button></td>
+                <td><div className="ats-name-cell"><button type="button" className="ats-pipeline-candidate-person" onClick={() => onCand(candidate.id)}><span className="ats-pipeline-candidate-avatar">{candidate.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><span><strong>{candidate.name}</strong><small title={[candidate.email, candidate.candidateId].filter(Boolean).join(" · ")}>{candidate.email || "No email provided"}{candidate.candidateId ? ` · ${candidate.candidateId}` : ""}</small></span></button>{canRecruit(role) && <span className="ats-contact-icons" onClick={(event) => event.stopPropagation()}><CallCandidate candidate={candidate} apiFetch={apiFetch} variant="icon" roleTitle={req.title} /><EmailCandidate candidate={candidate} apiFetch={apiFetch} variant="icon" roleTitle={req.title} /></span>}</div></td>
                 <td><span className={`ats-pipeline-stage-pill ${["Rejected", "Social CV Reject", "Candidate Backed Out"].includes(candidate.stage) ? "is-rejected" : ["HMApproved", "Selected", "OfferApproved", "Offered", "Onboarded"].includes(candidate.stage) ? "is-approved" : ["PendingHMApproval", "OfferApprovalPending", "On Hold"].includes(candidate.stage) ? "is-review" : candidate.stage === "New" ? "is-new" : "is-progress"}`}>{prettyStatus(candidate.stage)}</span>{(() => { const risk = dropoffRisk(candidate, Math.floor((Date.now() - new Date(candidate.updatedAt || candidate.createdAt).getTime()) / 86400000)); return risk && canRecruit(role) ? <span className={`ats-risk-pill is-${risk.level.toLowerCase()}`} title={risk.reasons.join(". ")}>{risk.level} drop-off risk</span> : null; })()}</td>
                 <td>{candidateInterviewCount}</td>
                 <td>{candidate.experienceYears != null ? `${candidate.experienceYears} years` : "—"}</td>
@@ -658,11 +690,16 @@ export function PipelinePanel({
                 <td>{candidate.notice || "—"}</td>
                 <td onClick={(event) => event.stopPropagation()}><div className="ats-pending-actions ats-next-actions">
                   {(() => {
-                    const [primary, ...rest] = nextSteps(candidate, schedulableRound, feedbackPending);
+                    const shown = offerBackout ? [] : nextSteps(candidate, schedulableRound, feedbackPending);
                     return <>
-                      {primary && <button type="button" className="ats-next-btn" disabled={primary.disabled} onClick={primary.onClick}>{primary.label}</button>}
-                      {canRecruit(role) && <CallCandidate candidate={candidate} apiFetch={apiFetch} variant="compact" roleTitle={req.title} />}
-                      <RowMenu label={`More actions for ${candidate.name}`} items={[...rest, { label: "View candidate", onClick: () => onCand(candidate.id) }]} />
+                      {offerBackout && <CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} apiFetch={apiFetch} onDone={onRefresh} label="Candidate Offer Reject/Backout" directBackout offerBackout />}
+                      {shown.map((step) => <button type="button" key={step.label} className={`ats-next-btn${step.danger ? " is-bad" : step.good ? " is-good" : ""}`} disabled={step.disabled} title={step.title} onClick={step.onClick}>{step.label}</button>)}
+                      {shown.some((step) => step.label === "Request offer") && <CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} apiFetch={apiFetch} onDone={onRefresh} label="Candidate Backout" directBackout />}
+                      {showStatusUpdate && onRescheduleInterview && requestedReschedules.map((interview) => <button type="button" key={interview.id} className="ats-next-btn" onClick={() => onRescheduleInterview(interview)}>{requestedReschedules.length > 1 ? `Reschedule interview · Round ${interview.roundIndex || 1}` : "Reschedule interview"}</button>)}
+                      {showStatusUpdate && candidate.stage === "Interview Scheduled" && rescheduledInterviews.length > 0 && <><CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} eligible={rescheduledInterviews} apiFetch={apiFetch} onDone={onRefresh} label="Candidate reschedule" accessibleLabel="Candidate requested reschedule" directReschedule="candidate" /><CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} eligible={rescheduledInterviews} apiFetch={apiFetch} onDone={onRefresh} label="Interviewer reschedule" accessibleLabel="Interviewer requested reschedule" directReschedule="interviewer" /></>}
+                      {showStatusUpdate && (candidate.stage === "Debrief" ? !shown.some((step) => step.label === "Add feedback") : rescheduleInterviews.length > 0 && rescheduledInterviews.length === 0) && <CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} eligible={rescheduleInterviews} apiFetch={apiFetch} onDone={onRefresh} label={candidate.stage === "Debrief" ? "Interview Backout" : "Update feedback"} directBackout={candidate.stage === "Debrief"} allowReschedule={candidate.stage === "Interview Scheduled"} showBackout={candidate.stage !== "Interview Scheduled"} />}
+                      {showStatusUpdate && candidate.stage === "Interview Scheduled" && !shown.some((step) => step.label === "Add feedback") && <CandidateStatusMenu candidateId={candidate.id} name={candidate.name} stage={candidate.stage} apiFetch={apiFetch} onDone={onRefresh} label={rescheduledInterviews.length ? "Candidate backout" : "Interview Backout"} directBackout />}
+                      {!shown.length && !showStatusUpdate && !offerBackout && <span className="ats-next-empty">—</span>}
                     </>;
                   })()}
                 </div></td>

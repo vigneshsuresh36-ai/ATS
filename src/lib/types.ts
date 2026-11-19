@@ -45,6 +45,8 @@ export interface AppUser {
   name: string;
   role: Role;
   title: string;
+  /** Work mobile number, used as the call-back number in candidate emails. */
+  phone?: string;
   /** Departments this person covers (HM raises for these; DH approves these). */
   departments: string[];
   accessScopes?: RequisitionAccessScope[];
@@ -561,6 +563,7 @@ export interface Interview {
   status: "Scheduled" | "Completed" | "Cancelled" | "Rescheduled" | "Reschedule Requested";
   rescheduleRequestedBy?: "Candidate" | "Interviewer";
   feedbackPending?: boolean;
+  hasFeedback?: boolean;
   feedbackAgeDays?: number;
   createdAt: string;
   createdBy: string;
@@ -579,6 +582,8 @@ export interface InterviewFeedback {
   feedback: string;
   createdAt: string;
   createdBy: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface ReferralPayout {
